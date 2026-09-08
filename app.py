@@ -102,58 +102,149 @@ def purge_old_scans():
             for jid, _ in finished[: len(active_scans) - MAX_ACTIVE_SCANS]:
                 active_scans.pop(jid, None)
 
+# ---------- Ortak urun tanima istemi -----------------------------------------
+
+PRODUCT_PROMPT = (
+    "Only write the product name using minimal words. When the product is a "
+    "glass cup, explicitly output 'glass cup' (not just 'glass') to avoid "
+    "confusion with the raw material. Preferably one word; if it's two words, "
+    "that's acceptable. If a synonym is available, choose the more specific "
+    "version. If there is no product in image, only write 'There is no product "
+    "in image.'"
+)
+
+NO_PRODUCT = "There is no product in image"
+
+_MIME_BY_EXT = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+}
+
+
+def guess_mime(image_path):
+    return _MIME_BY_EXT.get(os.path.splitext(image_path)[1].lower(), "image/jpeg")
+
+
+def read_b64(image_path):
+    with open(image_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+
+def api_error_detail(response):
+    """Saglayicinin JSON govdesindeki asil hata mesajini cikarir.
+
+    raise_for_status() sadece "429 Too Many Requests" gibi ciplak bir metin
+    veriyordu; "kredi bitti" ile "hiz siniri" ayirt edilemiyordu.
+    """
+    try:
+        err = response.json().get("error", {})
+    except ValueError:
+        return response.text[:200]
+    if isinstance(err, dict):
+        code = err.get("code") or err.get("status") or ""
+        msg = err.get("message") or ""
+        return f"{code}: {msg}".strip(": ") or response.text[:200]
+    return str(err)[:200]
+
+
 # ---------- OpenAI Image Analysis ------------------------------------------
 
 
 def analyze_image(image_path):
-    try:
-        # API anahtarını çevre değişkeninden al
-        api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY tanımlı değil")
 
-        if not api_key:
-            raise Exception("OPENAI_API_KEY environment variable is not set")
+    payload = {
+        "model": os.getenv("OPENAI_MODEL", "gpt-4o"),
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": PRODUCT_PROMPT},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{guess_mime(image_path)};base64,"
+                            f"{read_b64(image_path)}"
+                        },
+                    },
+                ],
+            }
+        ],
+        "max_tokens": 300,
+    }
 
-        with open(image_path, "rb") as image_file:
-            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-
-        # Yeni OpenAI API formatı
-        headers = {
+    r = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
-        }
+        },
+        json=payload,
+        timeout=60,
+    )
+    if not r.ok:
+        raise RuntimeError(f"OpenAI ({r.status_code}) {api_error_detail(r)}")
+    return r.json()["choices"][0]["message"]["content"].strip()
 
-        payload = {
-            "model": "gpt-4o",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Only write the product name using minimal words. When the product is a glass cup, explicitly output 'glass cup' (not just 'glass') to avoid confusion with the raw material. Preferably one word; if it's two words, that's acceptable. If a synonym is available, choose the more specific version. If there is no product in image, only write 'There is no product in image.'",
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            },
-                        },
-                    ],
-                }
-            ],
-            "max_tokens": 300,
-        }
 
-        response = requests.post(
-            "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
-        )
-        response.raise_for_status()
+# ---------- Gemini Image Analysis ------------------------------------------
 
-        result = response.json()["choices"][0]["message"]["content"]
-        return result
-    except Exception as e:
-        print(f"Error in analyze_image: {str(e)}")
-        raise
+
+def analyze_image_with_gemini(image_path):
+    """Google AI Studio (Gemini) ile gorsel analizi.
+
+    Ekstra paket gerektirmez; OpenAI yolundaki gibi duz REST cagrisi yapar.
+    Anahtar https://aistudio.google.com/apikey adresinden alinir.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY tanımlı değil")
+
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": PRODUCT_PROMPT},
+                    {
+                        "inline_data": {
+                            "mime_type": guess_mime(image_path),
+                            "data": read_b64(image_path),
+                        }
+                    },
+                ]
+            }
+        ],
+        "generationConfig": {"maxOutputTokens": 300, "temperature": 0},
+    }
+
+    r = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        json=payload,
+        timeout=60,
+    )
+    if not r.ok:
+        raise RuntimeError(f"Gemini ({r.status_code}) {api_error_detail(r)}")
+
+    data = r.json()
+    candidates = data.get("candidates") or []
+    if not candidates:
+        # Guvenlik filtresi icerigi engellemis olabilir.
+        reason = (data.get("promptFeedback") or {}).get("blockReason", "bilinmiyor")
+        raise RuntimeError(f"Gemini yanıt döndürmedi (sebep: {reason})")
+
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    text = "".join(part.get("text", "") for part in parts).strip()
+    if not text:
+        raise RuntimeError("Gemini boş yanıt döndürdü")
+    return text
 
 
 # ---------- Google Vision API Image Analysis -------------------------------
@@ -239,36 +330,71 @@ def analyze_image_with_google_vision(image_path):
         return product_name
 
     except Exception as e:
-        print(f"Google Vision API error: {str(e)}")
-        # Fallback to OpenAI
-        print("Falling back to OpenAI analysis...")
-        return analyze_image(image_path)
+        # Yedekleme artik analyze_image_hybrid'deki zincirde yapiliyor;
+        # burada sabit OpenAI'a dusmek Gemini secilmisken de OpenAI'a
+        # gitmeye sebep oluyordu.
+        raise RuntimeError(f"Google Vision: {e}") from e
 
 
-# ---------- Hybrid Analysis (En İyi Sonuç İçin) --------------------------
+# ---------- Saglayici zinciri ----------------------------------------------
+
+
+def gemini_available():
+    return bool(os.getenv("GEMINI_API_KEY"))
+
+
+def openai_available():
+    return bool(os.getenv("OPENAI_API_KEY"))
+
+
+def google_vision_available():
+    return GOOGLE_VISION_AVAILABLE and bool(
+        os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    )
+
+
+# lens_type -> (fonksiyon, kullanilabilir mi)
+PROVIDERS = {
+    "gemini": (analyze_image_with_gemini, gemini_available),
+    "google": (analyze_image_with_google_vision, google_vision_available),
+    "custom": (analyze_image, openai_available),
+}
 
 
 def analyze_image_hybrid(image_path, lens_type="custom"):
-    """Hibrit analiz: Hem Google Vision hem OpenAI kullan ve en iyi sonucu döndür"""
-    try:
-        if lens_type == "google" and GOOGLE_VISION_AVAILABLE:
-            # Google Vision'dan sonuç al
-            google_result = analyze_image_with_google_vision(image_path)
+    """Secilen lensi dener, basarisiz olursa yapilandirilmis digerlerine duser.
 
-            # Eğer Google Vision sonuç bulamazsa OpenAI'ya düş
-            if "There is no product in image" in google_result:
-                print("Google Vision couldn't identify product, trying OpenAI...")
-                return analyze_image(image_path)
+    Eskiden her hata sabit sekilde OpenAI'a dusuyordu; OpenAI kotasi bitince
+    hicbir lens calismiyordu.
+    """
+    order = [lens_type] + [k for k in PROVIDERS if k != lens_type]
+    errors = []
 
-            return google_result
-        else:
-            # Custom lens (OpenAI) kullan
-            return analyze_image(image_path)
+    for name in order:
+        func, is_available = PROVIDERS[name]
+        if not is_available():
+            continue
+        try:
+            result = (func(image_path) or "").strip()
+            if not result:
+                raise RuntimeError("boş yanıt")
+            # Lens urunu tanimadiysa siradakini dene, hemen pes etme.
+            if NO_PRODUCT.lower() in result.lower() and name != order[-1]:
+                errors.append(f"{name}: ürün tanınamadı")
+                continue
+            if name != lens_type:
+                print(f"'{lens_type}' başarısız oldu, '{name}' ile devam edildi.")
+            return result
+        except Exception as e:
+            print(f"Lens '{name}' hatası: {e}")
+            errors.append(f"{name}: {e}")
 
-    except Exception as e:
-        print(f"Hybrid analysis error: {str(e)}")
-        # Son çare olarak OpenAI kullan
-        return analyze_image(image_path)
+    if not errors:
+        raise RuntimeError(
+            "Hiçbir görsel analiz sağlayıcısı yapılandırılmamış "
+            "(GEMINI_API_KEY / OPENAI_API_KEY / GOOGLE_APPLICATION_CREDENTIALS)"
+        )
+    raise RuntimeError(" | ".join(errors))
 
 
 # ---------------------------------------------------------------------------
@@ -715,9 +841,9 @@ def lens_status():
     """Lens durumlarını kontrol et"""
     return jsonify(
         {
-            "openai_available": bool(os.getenv("OPENAI_API_KEY")),
-            "google_vision_available": GOOGLE_VISION_AVAILABLE
-            and bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS")),
+            "openai_available": openai_available(),
+            "google_vision_available": google_vision_available(),
+            "gemini_available": gemini_available(),
         }
     )
 
@@ -863,7 +989,7 @@ def analyze_image_endpoint():
         )
 
     lens_type = request.form.get("lens_type", "custom")
-    if lens_type not in ("custom", "google"):
+    if lens_type not in PROVIDERS:
         lens_type = "custom"
 
     fd, temp_path = tempfile.mkstemp(prefix="lens_", suffix=ext)
@@ -881,7 +1007,7 @@ def analyze_image_endpoint():
 
         product_name = analyze_image_hybrid(temp_path, lens_type)
 
-        if "There is no product in image" in product_name:
+        if NO_PRODUCT.lower() in product_name.lower():
             return (
                 jsonify({"success": False, "error": "Resimde ürün bulunamadı"}),
                 400,

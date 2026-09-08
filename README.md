@@ -36,13 +36,38 @@ cp .env.example .env
 
 5. `.env` dosyasını düzenleyin ve OpenAI API anahtarınızı ekleyin:
 ```
-OPENAI_API_KEY=your-api-key-here
 SECRET_KEY=<rastgele-uzun-deger>   # python -c "import os;print(os.urandom(32).hex())"
 
-# Opsiyonel
+# Gorsel analizi icin en az biri gerekli
+GEMINI_API_KEY=...                 # https://aistudio.google.com/apikey (ucretsiz kotasi var)
+OPENAI_API_KEY=...                 # https://platform.openai.com (kredi gerektirir)
 GOOGLE_APPLICATION_CREDENTIALS=google-vision-credentials.json
+
+# Opsiyonel
+GEMINI_MODEL=gemini-2.5-flash      # varsayilan; hesabinizda yoksa degistirin
+OPENAI_MODEL=gpt-4o
 CORS_ORIGINS=                      # bos = kapali (arayuz ayni origin'den servis ediliyor)
 FLASK_ENV=production               # SECRET_KEY yoksa acilista hata verir
+```
+
+### Lens secenekleri
+
+Uc gorsel analiz saglayicisi var; ana sayfadan secilir:
+
+| Lens | Anahtar | Not |
+|------|---------|-----|
+| Gemini | `GEMINI_API_KEY` | Ucretsiz kotasi var, kredi gerektirmez |
+| Ozel Lens | `OPENAI_API_KEY` | OpenAI hesabinda kredi gerektirir |
+| Google Lens | `GOOGLE_APPLICATION_CREDENTIALS` | Google Cloud Vision servis hesabi |
+
+Secilen lens basarisiz olursa yapilandirilmis diger saglayicilara otomatik
+dusulur. Hicbiri yapilandirilmamissa istek acik bir hata mesajiyla doner.
+
+Hesabinizda hangi Gemini modellerinin oldugunu gormek icin:
+
+```bash
+curl -s https://generativelanguage.googleapis.com/v1beta/models \
+  -H "x-goog-api-key: $GEMINI_API_KEY" | grep -o '"name": "[^"]*"'
 ```
 
 ## Geliştirme Ortamında Çalıştırma

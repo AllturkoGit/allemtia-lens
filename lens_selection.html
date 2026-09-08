@@ -133,7 +133,7 @@
 
       .lens-options {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
         gap: 30px;
         margin-top: 40px;
       }
@@ -201,6 +201,10 @@
 
       .custom-lens .lens-icon {
         background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+      }
+
+      .gemini-lens .lens-icon {
+        background: linear-gradient(135deg, #4285f4 0%, #9b72cb 50%, #d96570 100%);
       }
 
       .google-lens .lens-icon {
@@ -431,6 +435,26 @@
           </ul>
         </div>
 
+        <div class="lens-card gemini-lens" data-lens="gemini" id="geminiLens">
+          <div class="status-badge unavailable" id="geminiStatusBadge">
+            Kontrol ediliyor...
+          </div>
+          <div class="selected-indicator">✓</div>
+          <div class="lens-icon">✨</div>
+          <h3 class="lens-title">Gemini</h3>
+          <p class="lens-description">
+            Google'ın çok modlu yapay zekâsı. Ücretsiz kotası olduğu için
+            OpenAI kredisi gerektirmeden çalışır.
+          </p>
+          <ul class="lens-features" id="geminiFeatures">
+            <li class="disabled">Ücretsiz kota</li>
+            <li class="disabled">Güçlü görsel anlama</li>
+            <li class="disabled">Bağlama duyarlı ürün adı</li>
+            <li class="disabled">Türkçe desteği</li>
+            <li class="disabled">Düşük gecikme</li>
+          </ul>
+        </div>
+
         <div class="lens-card google-lens" data-lens="google" id="googleLens">
           <div class="status-badge unavailable" id="googleStatusBadge">
             Kontrol ediliyor...
@@ -474,10 +498,36 @@
     </div>
 
     <script>
-      let selectedLens = "custom";
+      // Her lens icin: kart id'si, rozet, ozellik listesi ve durum alani.
+      const LENSES = {
+        custom: {
+          card: "customLens",
+          badge: null,
+          features: null,
+          statusKey: "openai_available",
+          label: "Özel Lens Sistemi",
+        },
+        gemini: {
+          card: "geminiLens",
+          badge: "geminiStatusBadge",
+          features: "geminiFeatures",
+          statusKey: "gemini_available",
+          label: "Gemini",
+        },
+        google: {
+          card: "googleLens",
+          badge: "googleStatusBadge",
+          features: "googleFeatures",
+          statusKey: "google_vision_available",
+          label: "Google Lens",
+        },
+      };
+
+      let selectedLens = localStorage.getItem("selectedLens") || "custom";
       let lensStatus = {
         openai_available: false,
         google_vision_available: false,
+        gemini_available: false,
       };
 
       // Sayfa yüklendiğinde lens durumlarını kontrol et
@@ -488,61 +538,65 @@
       async function checkLensStatus() {
         try {
           const response = await fetch("/api/lens_status");
-          const data = await response.json();
-          lensStatus = data;
-
-          updateLensCards(data);
+          lensStatus = await response.json();
         } catch (error) {
           console.error("Lens status check failed:", error);
           showStatusAlert(
             "Lens durumları kontrol edilemedi. Varsayılan ayarlar kullanılacak."
           );
         }
+        updateLensCards(lensStatus);
       }
 
       function updateLensCards(status) {
-        const googleLens = document.getElementById("googleLens");
-        const googleStatusBadge = document.getElementById("googleStatusBadge");
-        const googleFeatures = document.getElementById("googleFeatures");
-        const statusAlert = document.getElementById("statusAlert");
-        const statusMessage = document.getElementById("statusMessage");
+        const usable = [];
 
-        if (status.google_vision_available) {
-          // Google Lens kullanılabilir
-          googleLens.classList.remove("disabled");
-          googleStatusBadge.textContent = "Kullanılabilir";
-          googleStatusBadge.className = "status-badge available";
+        Object.entries(LENSES).forEach(([key, cfg]) => {
+          const card = document.getElementById(cfg.card);
+          if (!card) return;
+          const available = !!status[cfg.statusKey];
+          const badge = cfg.badge
+            ? document.getElementById(cfg.badge)
+            : card.querySelector(".status-badge");
 
-          // Features'ları aktif yap
-          googleFeatures.querySelectorAll("li").forEach((li) => {
-            li.classList.remove("disabled");
-          });
-
-          showStatusAlert("✅ Her iki lens sistemi de kullanılabilir!");
-        } else {
-          // Google Lens kullanılamaz
-          googleLens.classList.add("disabled");
-          googleStatusBadge.textContent = "Kullanılamaz";
-          googleStatusBadge.className = "status-badge unavailable";
-
-          if (!status.openai_available) {
-            showStatusAlert(
-              "⚠️ Hiçbir lens sistemi kullanılamaz. API anahtarlarını kontrol edin."
-            );
-          } else {
-            showStatusAlert(
-              "⚠️ Google Lens kullanılamaz. Sadece özel lens sistemi aktif."
-            );
+          card.classList.toggle("disabled", !available);
+          if (badge) {
+            badge.textContent = available ? "Kullanılabilir" : "Kullanılamaz";
+            badge.className =
+              "status-badge " + (available ? "available" : "unavailable");
           }
+          const features = cfg.features
+            ? document.getElementById(cfg.features)
+            : null;
+          if (features) {
+            features.querySelectorAll("li").forEach((li) => {
+              li.classList.toggle("disabled", !available);
+            });
+          }
+          if (available) usable.push(cfg.label);
+        });
+
+        // Secili lens kullanilamiyorsa ilk kullanilabilir olana gec.
+        if (!status[LENSES[selectedLens]?.statusKey]) {
+          const fallback = Object.keys(LENSES).find((k) => status[LENSES[k].statusKey]);
+          if (fallback) selectedLens = fallback;
+        }
+        document
+          .querySelectorAll(".lens-card")
+          .forEach((c) => c.classList.remove("selected"));
+        const activeCard = document.getElementById(LENSES[selectedLens]?.card);
+        if (activeCard && !activeCard.classList.contains("disabled")) {
+          activeCard.classList.add("selected");
         }
 
-        // OpenAI durumunu kontrol et
-        if (!status.openai_available) {
-          document.getElementById("customLens").classList.add("disabled");
-          document.querySelector("#customLens .status-badge").textContent =
-            "Kullanılamaz";
-          document.querySelector("#customLens .status-badge").className =
-            "status-badge unavailable";
+        if (usable.length === 0) {
+          showStatusAlert(
+            "⚠️ Hiçbir lens kullanılamıyor. Sunucudaki API anahtarlarını kontrol edin."
+          );
+        } else if (usable.length === Object.keys(LENSES).length) {
+          showStatusAlert("✅ Tüm lens sistemleri kullanılabilir!");
+        } else {
+          showStatusAlert("Kullanılabilir lensler: " + usable.join(", "));
         }
       }
 
@@ -573,23 +627,12 @@
         });
       });
 
-      // Varsayılan seçimi ayarla
-      document
-        .querySelector(".lens-card.custom-lens")
-        .classList.add("selected");
-
       function continueLensSelection() {
-        // Seçilen lens kullanılabilir mi kontrol et
-        if (selectedLens === "google" && !lensStatus.google_vision_available) {
+        const cfg = LENSES[selectedLens];
+        if (!cfg || !lensStatus[cfg.statusKey]) {
           alert(
-            "Google Lens şu anda kullanılamaz. Lütfen özel lens sistemini seçin."
-          );
-          return;
-        }
-
-        if (selectedLens === "custom" && !lensStatus.openai_available) {
-          alert(
-            "Özel lens sistemi şu anda kullanılamaz. API anahtarını kontrol edin."
+            `${cfg ? cfg.label : "Seçilen lens"} şu anda kullanılamıyor. ` +
+              "Kullanılabilir bir lens seçin."
           );
           return;
         }

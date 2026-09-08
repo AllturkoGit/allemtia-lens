@@ -747,6 +747,11 @@
       let allResults = [];
       let statusCheckInterval = null;
       const API_URL = '/api';
+      const LENS_NAMES = {
+        custom: "Özel Lens Sistemi",
+        gemini: "Gemini",
+        google: "Google Lens",
+      };
       let selectedImage = null;
 
       // Sayfa yüklendiğinde lens seçimini kontrol et
@@ -765,8 +770,7 @@
         const lensInfo = document.createElement("div");
         lensInfo.className = "lens-info";
 
-        const lensName =
-          lensType === "custom" ? "Özel Lens Sistemi" : "Google Lens";
+        const lensName = LENS_NAMES[lensType] || lensType;
         const lensIcon = lensType === "custom" ? "🔍" : "📷";
 
         lensInfo.innerHTML = `
@@ -964,8 +968,7 @@
 
           // Lens türünü al
           const lensType = localStorage.getItem("selectedLens") || "custom";
-          const lensName =
-            lensType === "custom" ? "Özel Lens Sistemi" : "Google Lens";
+          const lensName = LENS_NAMES[lensType] || lensType;
 
           showStatus(`${lensName} ile resim analiz ediliyor...`, "loading");
 
@@ -996,7 +999,7 @@
             // Show product tag with lens info
             const productTag = document.getElementById("productTag");
             productTag.textContent = `${sector} (${
-              analyzeData.lens_used === "custom" ? "Özel Lens" : "Google Lens"
+              LENS_NAMES[analyzeData.lens_used] || analyzeData.lens_used
             })`;
             productTag.style.display = "inline-block";
 
