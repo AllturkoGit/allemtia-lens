@@ -743,7 +743,7 @@
       let currentJobId = null;
       let allResults = [];
       let statusCheckInterval = null;
-      const API_URL = "http://localhost:5008";
+      const API_URL = '/api';
       let selectedImage = null;
 
       // Sayfa yüklendiğinde lens seçimini kontrol et
@@ -947,7 +947,7 @@
 
           try {
             const analyzeResponse = await fetch(
-              `${API_URL}/api/analyze_image`,
+              `${API_URL}/analyze_image`,
               {
                 method: "POST",
                 body: formData,
@@ -1008,7 +1008,7 @@
         showStatus("Arama başlatılıyor...", "loading");
 
         try {
-          const response = await fetch(`${API_URL}/api/start_scan`, {
+          const response = await fetch(`${API_URL}/start_scan`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -1042,7 +1042,7 @@
 
         try {
           const response = await fetch(
-            `${API_URL}/api/scan_status/${currentJobId}`
+            `${API_URL}/scan_status/${currentJobId}`
           );
           const data = await response.json();
 
