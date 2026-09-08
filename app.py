@@ -1,11 +1,11 @@
 # ---------------------------------------------------------------------------
 #  app.py   –   Flask Business Scanner Application with Google Vision API
 # ---------------------------------------------------------------------------
-import os, re, json, time, uuid, ssl, math, random, threading, traceback
+import os, re, time, uuid, random, threading, traceback
 import unicodedata, concurrent.futures, requests, base64
+import tempfile
 from datetime import datetime
 from urllib.parse import urlparse, urljoin, unquote, urlencode
-from functools import wraps
 from dotenv import load_dotenv
 
 import pandas as pd
@@ -13,7 +13,6 @@ from bs4 import BeautifulSoup
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from deep_translator import GoogleTranslator
-import openai
 import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -34,10 +33,74 @@ load_dotenv()
 
 # ---------- Genel yapılandırma ---------------------------------------------
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "your-secret-key-here")
-CORS(app)
+
+# SECRET_KEY zorunlu: sabit varsayilan ("your-secret-key-here") ile production'a
+# cikmak imza dogrulamasini anlamsiz kilardi.
+_secret = os.getenv("SECRET_KEY")
+if not _secret:
+    if os.getenv("FLASK_ENV") == "production":
+        raise RuntimeError("SECRET_KEY tanimli degil (.env dosyasina ekleyin)")
+    _secret = os.urandom(32).hex()
+    print("UYARI: SECRET_KEY yok, gecici anahtar uretildi (sadece gelistirme).")
+app.config["SECRET_KEY"] = _secret
+
+# Yuklenecek gorsel icin ust sinir; istemcideki 10MB kontrolu asilabilir.
+ALLOWED_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+
+# imghdr Python 3.13'te kaldirildi; sihirli baytlari kendimiz kontrol ediyoruz.
+_IMAGE_MAGIC = (
+    b"\xff\xd8\xff",       # jpeg
+    b"\x89PNG\r\n\x1a\n",  # png
+    b"GIF87a",
+    b"GIF89a",
+    b"BM",                  # bmp
+)
+
+
+def is_supported_image(path):
+    """Uzantiya degil, dosya icerigine bakarak gorsel olup olmadigini dogrular."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(16)
+    except OSError:
+        return False
+    if head.startswith(_IMAGE_MAGIC):
+        return True
+    return head[:4] == b"RIFF" and head[8:12] == b"WEBP"  # webp
+
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_IMAGE_BYTES
+
+# CORS: arayuz backend ile ayni origin'den servis ediliyor, bu yuzden
+# varsayilan olarak kapali. Farkli origin gerekirse CORS_ORIGINS ile verilir.
+_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+if _origins:
+    CORS(app, resources={r"/api/*": {"origins": _origins}})
 
 active_scans: dict[str, dict] = {}  # bellekte iş takibi
+_scans_lock = threading.Lock()
+
+# Biten isler surec belleginde birikmesin diye TTL ile temizlenir.
+SCAN_TTL_SECONDS = 60 * 60  # biten is 1 saat sonra dusulur
+MAX_ACTIVE_SCANS = 200  # ust sinir; asilirsa en eskiler dusulur
+
+
+def purge_old_scans():
+    """Suresi dolmus/fazla birikmis tarama kayitlarini bellekten dusur."""
+    now = time.time()
+    with _scans_lock:
+        for jid, d in list(active_scans.items()):
+            fin = d.get("finished_at")
+            if fin and now - fin > SCAN_TTL_SECONDS:
+                active_scans.pop(jid, None)
+
+        if len(active_scans) > MAX_ACTIVE_SCANS:
+            finished = sorted(
+                ((jid, d) for jid, d in active_scans.items() if d.get("finished_at")),
+                key=lambda kv: kv[1]["finished_at"],
+            )
+            for jid, _ in finished[: len(active_scans) - MAX_ACTIVE_SCANS]:
+                active_scans.pop(jid, None)
 
 # ---------- OpenAI Image Analysis ------------------------------------------
 
@@ -45,9 +108,9 @@ active_scans: dict[str, dict] = {}  # bellekte iş takibi
 def analyze_image(image_path):
     try:
         # API anahtarını çevre değişkeninden al
-        openai.api_key = os.getenv("OPENAI_API_KEY")
+        api_key = os.getenv("OPENAI_API_KEY")
 
-        if not openai.api_key:
+        if not api_key:
             raise Exception("OPENAI_API_KEY environment variable is not set")
 
         with open(image_path, "rb") as image_file:
@@ -56,7 +119,7 @@ def analyze_image(image_path):
         # Yeni OpenAI API formatı
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {openai.api_key}",
+            "Authorization": f"Bearer {api_key}",
         }
 
         payload = {
@@ -341,16 +404,29 @@ def kurumsal_arama_worker(
     kurumsal_lokasyon,
     selected_types=None,
     callback=None,
+    should_stop=None,
 ):
+    # should_stop: True donerse tarama ilk uygun noktada birakilir.
+    # Eskiden /api/stop_scan sadece status'u "stopping" yapiyordu, worker bunu
+    # hic okumadigi icin tarama durmuyordu.
+    stop = should_stop or (lambda: False)
+    # deep_translator duz string dondurur; eski googletrans'taki .text ve dest=
+    # kullanimi her cagrida AttributeError/TypeError atiyordu, yani ceviri hic
+    # calismiyordu ve Turkce anahtar kelime cevrilmeden Europages'e gidiyordu.
     try:
         translator = GoogleTranslator(source="auto", target="en")
-        kurumsal_sektor_en = translator.translate(kurumsal_sektor, dest="en").text
-    except Exception:
+        kurumsal_sektor_en = translator.translate(kurumsal_sektor)
+        if not kurumsal_sektor_en:
+            kurumsal_sektor_en = kurumsal_sektor
+    except Exception as e:
+        print(f"Ceviri basarisiz, orijinal kelime kullanilacak: {e}")
         kurumsal_sektor_en = kurumsal_sektor
 
-    df = pd.DataFrame(columns=["Adı", "Website", "Email", "Telefon"])
-    original_ctx = ssl._create_default_https_context
-    ssl._create_default_https_context = ssl._create_unverified_context
+    # Satirlar 10 thread'ten geliyor; kilitli listeye toplanip en sonda tek
+    # seferde DataFrame'e cevriliyor. Eskiden her satirda pd.concat yapiliyordu:
+    # hem yarisa acikti (kayit kaybi) hem de O(n^2) idi.
+    collected_rows: list[dict] = []
+    df_lock = threading.Lock()
     all_urls = []
 
     # Ülke konfigürasyonları (önceki kodun aynısı)
@@ -460,6 +536,8 @@ def kurumsal_arama_worker(
 
     def sayfa_isle(url, session, hdr):
         l = []
+        if stop():
+            return l
         try:
             r = session.get(url, headers=hdr, verify=False, timeout=10)
             r.raise_for_status()
@@ -498,7 +576,8 @@ def kurumsal_arama_worker(
             return [], []
 
     def istek_gonder(url):
-        nonlocal df
+        if stop():
+            return
         try:
             ep_url = f"https://www.europages.co.uk{url}"
             hdr = {
@@ -556,67 +635,30 @@ def kurumsal_arama_worker(
                 ]
                 p_list = phones
                 if e_list or p_list:
-                    new = pd.DataFrame(
+                    rows = [
                         {
-                            "Adı": [sirket_adi],
-                            "Website": [web_link],
-                            "Email": [e_list[0] if e_list else ""],
-                            "Telefon": [p_list[0] if p_list else ""],
+                            "Adı": sirket_adi,
+                            "Website": web_link,
+                            "Email": e_list[i] if i < len(e_list) else "",
+                            "Telefon": p_list[i] if i < len(p_list) else "",
                         }
-                    )
-                    df = pd.concat([df, new], ignore_index=True)
-                    max_len = max(len(e_list[1:]), len(p_list[1:]))
-                    for i in range(max_len):
-                        df = pd.concat(
-                            [
-                                df,
-                                pd.DataFrame(
-                                    {
-                                        "Adı": [sirket_adi],
-                                        "Website": [web_link],
-                                        "Email": [
-                                            e_list[i + 1] if i + 1 < len(e_list) else ""
-                                        ],
-                                        "Telefon": [
-                                            p_list[i + 1] if i + 1 < len(p_list) else ""
-                                        ],
-                                    }
-                                ),
-                            ],
-                            ignore_index=True,
-                        )
+                        for i in range(max(len(e_list), len(p_list)))
+                    ]
+                    with df_lock:
+                        collected_rows.extend(rows)
                 if callback:
                     callback(sirket_adi, web_link, ", ".join(e_list), ", ".join(p_list))
             except Exception:
                 if add_phones:
-                    df = pd.concat(
-                        [
-                            df,
-                            pd.DataFrame(
-                                {
-                                    "Adı": [sirket_adi],
-                                    "Website": [web_link],
-                                    "Email": [""],
-                                    "Telefon": [add_phones[0]],
-                                }
-                            ),
-                        ],
-                        ignore_index=True,
-                    )
-                    for i in range(1, len(add_phones)):
-                        df = pd.concat(
-                            [
-                                df,
-                                pd.DataFrame(
-                                    {
-                                        "Adı": [sirket_adi],
-                                        "Website": [web_link],
-                                        "Email": [""],
-                                        "Telefon": [add_phones[i]],
-                                    }
-                                ),
-                            ],
-                            ignore_index=True,
+                    with df_lock:
+                        collected_rows.extend(
+                            {
+                                "Adı": sirket_adi,
+                                "Website": web_link,
+                                "Email": "",
+                                "Telefon": ph,
+                            }
+                            for ph in add_phones
                         )
                 if callback:
                     callback(sirket_adi, web_link, "", ", ".join(add_phones))
@@ -631,6 +673,7 @@ def kurumsal_arama_worker(
     def clean_name(ad):
         return re.sub(r"-\d+$", " ", ad).replace("-", " ").title()
 
+    df = pd.DataFrame(collected_rows, columns=["Adı", "Website", "Email", "Telefon"])
     if not df.empty:
         df["Adı"] = df["Adı"].apply(clean_name)
 
@@ -644,7 +687,9 @@ def kurumsal_arama_worker(
         for _, r in df.iterrows()
     ]
     if callback:
-        callback("İşlem tamamlandı", "", "", "")
+        callback(
+            "İşlem durduruldu" if stop() else "İşlem tamamlandı", "", "", ""
+        )
     return None, data_list
 
 
@@ -673,9 +718,6 @@ def lens_status():
             "openai_available": bool(os.getenv("OPENAI_API_KEY")),
             "google_vision_available": GOOGLE_VISION_AVAILABLE
             and bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS")),
-            "google_credentials_path": os.getenv(
-                "GOOGLE_APPLICATION_CREDENTIALS", "Not set"
-            ),
         }
     )
 
@@ -688,7 +730,8 @@ def start_scan():
     if "keyword" not in data:
         return jsonify({"success": False, "error": "keyword parametresi gerekli"}), 400
 
-    user_id = data.get("user_id", "anonymous")
+    purge_old_scans()
+
     country = data.get("country", "TR")
     job_id = str(uuid.uuid4())
     active_scans[job_id] = {
@@ -702,7 +745,7 @@ def start_scan():
         "file": None,
         "error": None,
         "last_error": None,
-        "user_id": user_id,
+        "finished_at": None,
     }
 
     def scan_europages(sector: str, country: str = "TR", job_id: str | None = None):
@@ -718,6 +761,11 @@ def start_scan():
             d["new_rows"].append(row)
             d["rows_found"] += 1
 
+        def _should_stop():
+            return bool(job_id) and active_scans.get(job_id, {}).get(
+                "status"
+            ) in ("stopping", "stopped")
+
         try:
             _, data_rows = kurumsal_arama_worker(
                 kurumsal_sektor=sector,
@@ -725,6 +773,7 @@ def start_scan():
                 kurumsal_lokasyon=country,
                 selected_types=None,
                 callback=_cb,
+                should_stop=_should_stop,
             )
             if job_id:
                 if data_rows and not active_scans[job_id]["rows"]:
@@ -736,12 +785,16 @@ def start_scan():
                         active_scans[job_id]["rows"]
                     )
 
-                active_scans[job_id]["status"] = "completed"
+                active_scans[job_id]["status"] = (
+                    "stopped" if _should_stop() else "completed"
+                )
+                active_scans[job_id]["finished_at"] = time.time()
         except Exception as e:
             traceback.print_exc()
             if job_id:
                 active_scans[job_id]["status"] = "error"
                 active_scans[job_id]["error"] = str(e)
+                active_scans[job_id]["finished_at"] = time.time()
 
     t = threading.Thread(
         target=scan_europages, args=(data["keyword"].strip(), country, job_id)
@@ -753,14 +806,12 @@ def start_scan():
 
 @app.route("/api/scan_status/<job_id>", methods=["GET"])
 def scan_status(job_id):
-    user_id = request.args.get("user_id", "anonymous")
-    if job_id not in active_scans:
+    # Erisim kontrolu job_id'nin kendisidir: uuid4 tahmin edilemez.
+    # Eski user_id kontrolu istemcinin gonderdigi degere bakiyordu ve
+    # user_id="admin" ile herkes her isi gorebiliyordu; guvenlik saglamiyordu.
+    d = active_scans.get(job_id)
+    if d is None:
         return jsonify({"status": "error", "error": "Tarama işi bulunamadı"})
-    d = active_scans[job_id]
-    if d["user_id"] != user_id and user_id != "admin":
-        return jsonify(
-            {"status": "error", "error": "Bu tarama işine erişim izniniz yok"}
-        )
     new_rows = d["new_rows"][:]
     d["new_rows"] = []
     resp = {
@@ -769,7 +820,7 @@ def scan_status(job_id):
         "new_rows": new_rows,
         "rows": d["rows"],
     }
-    if d["status"] in ("completed", "error"):
+    if d["status"] in ("completed", "error", "stopped"):
         resp.update(
             {"file": d["file"], "total_rows": len(d["rows"]), "error": d["error"]}
         )
@@ -778,71 +829,93 @@ def scan_status(job_id):
 
 @app.route("/api/stop_scan/<job_id>", methods=["POST"])
 def stop_scan(job_id):
-    user_id = (
-        request.json.get("user_id", "anonymous") if request.is_json else "anonymous"
-    )
-    if job_id not in active_scans:
+    d = active_scans.get(job_id)
+    if d is None:
         return jsonify({"success": False, "error": "Tarama işi bulunamadı"})
-    if active_scans[job_id]["user_id"] != user_id and user_id != "admin":
-        return jsonify({"success": False, "error": "Durdurma yetkiniz yok"})
-    active_scans[job_id]["status"] = "stopping"
-    return jsonify({"success": True})
+    if d["status"] == "running":
+        d["status"] = "stopping"
+    return jsonify({"success": True, "status": d["status"]})
 
 
 @app.route("/api/analyze_image", methods=["POST"])
 def analyze_image_endpoint():
+    if "image" not in request.files:
+        return jsonify({"success": False, "error": "Resim dosyası gerekli"}), 400
+
+    file = request.files["image"]
+    if not file.filename:
+        return jsonify({"success": False, "error": "Dosya seçilmedi"}), 400
+
+    # Uzantiyi kullanicinin dosya adindan degil, sadece izin verilen listeden al.
+    # Eskiden file.filename dogrudan temp yola gomuluyordu; "../" iceren bir ad
+    # dosyayi temp dizininin disina yazabilirdi.
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_IMAGE_EXTS:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": f"Desteklenmeyen dosya türü. İzin verilenler: "
+                    f"{', '.join(sorted(ALLOWED_IMAGE_EXTS))}",
+                }
+            ),
+            400,
+        )
+
+    lens_type = request.form.get("lens_type", "custom")
+    if lens_type not in ("custom", "google"):
+        lens_type = "custom"
+
+    fd, temp_path = tempfile.mkstemp(prefix="lens_", suffix=ext)
+    os.close(fd)
     try:
-        if "image" not in request.files:
-            return jsonify({"success": False, "error": "Resim dosyası gerekli"}), 400
-
-        file = request.files["image"]
-        if file.filename == "":
-            return jsonify({"success": False, "error": "Dosya seçilmedi"}), 400
-
-        # Lens türünü kontrol et
-        lens_type = request.form.get("lens_type", "custom")
-
-        # Save temporary file
-        import tempfile
-
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, f"{uuid.uuid4()}_{file.filename}")
         file.save(temp_path)
 
-        # Analyze image
-        try:
-            product_name = analyze_image_hybrid(temp_path, lens_type)
-
-            # Check if no product found
-            if "There is no product in image" in product_name:
-                os.remove(temp_path)
-                return (
-                    jsonify({"success": False, "error": "Resimde ürün bulunamadı"}),
-                    400,
-                )
-
-            # Clean up
-            os.remove(temp_path)
-
-            return jsonify(
-                {
-                    "success": True,
-                    "product": product_name,
-                    "lens_used": lens_type,
-                    "google_vision_available": GOOGLE_VISION_AVAILABLE,
-                }
-            )
-
-        except Exception as e:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+        # Icerigin gercekten gorsel oldugunu sihirli baytlardan dogrula:
+        # uzanti degistirilerek rastgele dosya gonderilebilir.
+        if not is_supported_image(temp_path):
             return (
-                jsonify({"success": False, "error": f"Resim analiz hatası: {str(e)}"}),
-                500,
+                jsonify({"success": False, "error": "Dosya geçerli bir resim değil"}),
+                400,
             )
 
+        product_name = analyze_image_hybrid(temp_path, lens_type)
+
+        if "There is no product in image" in product_name:
+            return (
+                jsonify({"success": False, "error": "Resimde ürün bulunamadı"}),
+                400,
+            )
+
+        return jsonify(
+            {
+                "success": True,
+                "product": product_name,
+                "lens_used": lens_type,
+                "google_vision_available": GOOGLE_VISION_AVAILABLE,
+            }
+        )
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        traceback.print_exc()
+        return (
+            jsonify({"success": False, "error": f"Resim analiz hatası: {str(e)}"}),
+            500,
+        )
+    finally:
+        # Tek cikis noktasi: eskiden temizlik uc ayri dalda tekrarlaniyor,
+        # bazi hatalarda temp dosya diskte kaliyordu.
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+
+
+@app.errorhandler(413)
+def too_large(_e):
+    return (
+        jsonify({"success": False, "error": "Dosya çok büyük (en fazla 10MB)"}),
+        413,
+    )
 
 
 if __name__ == "__main__":

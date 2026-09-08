@@ -37,7 +37,12 @@ cp .env.example .env
 5. `.env` dosyasını düzenleyin ve OpenAI API anahtarınızı ekleyin:
 ```
 OPENAI_API_KEY=your-api-key-here
-SECRET_KEY=your-secret-key-here
+SECRET_KEY=<rastgele-uzun-deger>   # python -c "import os;print(os.urandom(32).hex())"
+
+# Opsiyonel
+GOOGLE_APPLICATION_CREDENTIALS=google-vision-credentials.json
+CORS_ORIGINS=                      # bos = kapali (arayuz ayni origin'den servis ediliyor)
+FLASK_ENV=production               # SECRET_KEY yoksa acilista hata verir
 ```
 
 ## Geliştirme Ortamında Çalıştırma
@@ -52,8 +57,15 @@ Uygulama http://localhost:5008 adresinde çalışacaktır.
 
 Gunicorn ile çalıştırma:
 ```bash
-gunicorn -w 4 -b 0.0.0.0:5008 wsgi:app
+gunicorn -w 1 --threads 8 --timeout 120 -b 127.0.0.1:5008 wsgi:app
 ```
+
+> **`-w 1` zorunludur, tercih değil.** Tarama işleri `active_scans` sözlüğünde
+> süreç belleğinde tutulur. Birden fazla worker'da `start_scan` bir sürece,
+> `scan_status` başka bir sürece düşer ve istemci "Tarama işi bulunamadı"
+> hatası alır. Eş zamanlılık worker ile değil thread ile sağlanır.
+> Ayarlar `gunicorn.conf.py` dosyasında da var; komut satırında `-w` verirseniz
+> dosyadaki değeri ezer.
 
 ## Deployment
 
@@ -71,7 +83,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5008", "wsgi:app"]
+CMD ["gunicorn", "-w", "1", "--threads", "8", "-b", "0.0.0.0:5008", "wsgi:app"]
 ```
 
 ## API Endpoints

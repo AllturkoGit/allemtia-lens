@@ -692,6 +692,9 @@
         <button id="searchBtn" onclick="startSearch()">
           <span>Aramayı Başlat</span>
         </button>
+        <button id="stopBtn" onclick="stopSearch()" style="display: none">
+          <span>Taramayı Durdur</span>
+        </button>
       </div>
 
       <div id="statusBar" class="status-bar"></div>
@@ -920,6 +923,31 @@
         statusBar.classList.remove("active");
       }
 
+      function setScanning(on) {
+        document.getElementById("searchBtn").disabled = on;
+        document.getElementById("stopBtn").style.display = on
+          ? "block"
+          : "none";
+      }
+
+      async function stopSearch() {
+        if (!currentJobId) return;
+        const btn = document.getElementById("stopBtn");
+        btn.disabled = true;
+        showStatus("Tarama durduruluyor...", "loading");
+        try {
+          await fetch(`${API_URL}/stop_scan/${currentJobId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+        } catch (error) {
+          showStatus("Durdurma hatası: " + error.message, "error");
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
       async function startSearch() {
         const country = document.getElementById("country").value;
         const searchType = document.querySelector(
@@ -1002,8 +1030,7 @@
         document.getElementById("resultsSection").classList.add("active");
         document.getElementById("emptyState").style.display = "block";
 
-        // Disable button
-        document.getElementById("searchBtn").disabled = true;
+        setScanning(true);
 
         showStatus("Arama başlatılıyor...", "loading");
 
@@ -1029,11 +1056,11 @@
             statusCheckInterval = setInterval(checkStatus, 1000);
           } else {
             showStatus("Hata: " + (data.error || "Bilinmeyen hata"), "error");
-            document.getElementById("searchBtn").disabled = false;
+            setScanning(false);
           }
         } catch (error) {
           showStatus("Bağlantı hatası: " + error.message, "error");
-          document.getElementById("searchBtn").disabled = false;
+          setScanning(false);
         }
       }
 
@@ -1049,7 +1076,7 @@
           if (data.status === "error") {
             clearInterval(statusCheckInterval);
             showStatus("Hata: " + (data.error || "Bilinmeyen hata"), "error");
-            document.getElementById("searchBtn").disabled = false;
+            setScanning(false);
             return;
           }
 
@@ -1083,13 +1110,22 @@
               `Tarama devam ediyor... ${data.rows_found} şirket bulundu`,
               "loading"
             );
+          } else if (data.status === "stopping") {
+            showStatus("Tarama durduruluyor...", "loading");
+          } else if (data.status === "stopped") {
+            clearInterval(statusCheckInterval);
+            showStatus(
+              `Tarama durduruldu. ${data.rows_found} şirket bulundu`,
+              "success"
+            );
+            setScanning(false);
           } else if (data.status === "completed") {
             clearInterval(statusCheckInterval);
             showStatus(
               `Tarama tamamlandı! ${data.rows_found} şirket bulundu`,
               "success"
             );
-            document.getElementById("searchBtn").disabled = false;
+            setScanning(false);
 
             // Load all results if not already loaded
             if (data.rows && data.rows.length > allResults.length) {
