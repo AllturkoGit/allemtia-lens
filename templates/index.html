@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Business1ss Scanner</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+  </head>
+  <body>
+    <div class="container">
+      <h1>Business Scanner</h1>
+      <p class="subtitle">
+        Ürün fotoğrafı veya anahtar kelime ile ilgili şirketleri bulun
+      </p>
+
+      <!-- Arama türü seçimi -->
+      <div
+        style="
+          display: flex;
+          justify-content: center;
+          margin-bottom: 30px;
+          gap: 20px;
+        "
+      >
+        <label
+          style="
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-weight: 500;
+            color: var(--dark);
+          "
+        >
+          <input
+            type="radio"
+            name="searchType"
+            value="image"
+            checked
+            style="margin-right: 8px; cursor: pointer"
+          />
+          <span>🖼️ Resim ile Ara</span>
+        </label>
+        <label
+          style="
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-weight: 500;
+            color: var(--dark);
+          "
+        >
+          <input
+            type="radio"
+            name="searchType"
+            value="keyword"
+            style="margin-right: 8px; cursor: pointer"
+          />
+          <span>🔤 Kelime ile Ara</span>
+        </label>
+      </div>
+
+      <div class="search-section">
+        <!-- Resim yükleme alanı -->
+        <div class="form-group" id="imageSearchGroup">
+          <label for="imageInput">Ürün Fotoğrafı</label>
+          <input
+            type="file"
+            id="imageInput"
+            accept="image/*"
+            style="display: none"
+          />
+          <div
+            id="imagePreview"
+            onclick="document.getElementById('imageInput').click()"
+          >
+            <div id="previewContent">
+              <svg
+                class="upload-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              <p style="color: #94a3b8; font-weight: 500">
+                Resim yüklemek için tıklayın veya sürükleyin
+              </p>
+              <p style="color: #cbd5e1; font-size: 13px; margin-top: 8px">
+                PNG, JPG, JPEG (Max. 10MB)
+              </p>
+            </div>
+          </div>
+          <input type="hidden" id="sector" value="" />
+        </div>
+
+        <!-- Anahtar kelime arama alanı -->
+        <div class="form-group" id="keywordSearchGroup" style="display: none">
+          <label for="keywordInput">Anahtar Kelime</label>
+          <input
+            type="text"
+            id="keywordInput"
+            placeholder="Örn: cam bardak, elektronik, mobilya..."
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="country">Ülke</label>
+          <select id="country">
+            <option value="TR">🇹🇷 Türkiye</option>
+            <option value="DE">🇩🇪 Almanya</option>
+            <option value="NL">🇳🇱 Hollanda</option>
+            <option value="FR">🇫🇷 Fransa</option>
+          </select>
+        </div>
+
+        <button id="searchBtn" onclick="startSearch()">
+          <span>Aramayı Başlat</span>
+        </button>
+      </div>
+
+      <div id="statusBar" class="status-bar"></div>
+
+      <div id="resultsSection" class="results-section">
+        <div class="results-header">
+          <div class="results-count">
+            Bulunan: <span id="resultCount">0</span> şirket
+            <span
+              id="productTag"
+              class="product-tag"
+              style="display: none"
+            ></span>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <div style="overflow-x: auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Şirket Adı</th>
+                  <th>Website</th>
+                </tr>
+              </thead>
+              <tbody id="resultsBody"></tbody>
+            </table>
+          </div>
+          <div id="emptyState" class="empty-state" style="display: none">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.35-4.35" />
+            </svg>
+            <p style="font-size: 18px; font-weight: 600; margin-bottom: 8px">
+              Henüz sonuç yok
+            </p>
+            <p>Arama tamamlandığında sonuçlar burada görünecek</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  </body>
+</html>

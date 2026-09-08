@@ -1,0 +1,24 @@
+# Sırlar - asla commit edilmez
+.env
+google-vision-credentials.json
+sync_config.jsonc
+
+# Sanal ortamlar
+venv/
+.venv/
+*_venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Çalışma zamanı
+logs/
+*.log
+
+# Editör
+.vscode/
+.idea/
+
+# Claude Code yerel ayarları
+.claude/settings.local.json

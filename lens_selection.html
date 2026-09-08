@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Business Scanner - Lens Seçimi</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --primary: #6366f1;
+        --primary-dark: #4f46e5;
+        --secondary: #8b5cf6;
+        --success: #10b981;
+        --error: #ef4444;
+        --warning: #f59e0b;
+        --dark: #1e293b;
+        --light: #f8fafc;
+        --shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
+          0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        --glass-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      }
+
+      body {
+        font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        position: relative;
+        overflow-x: hidden;
+      }
+
+      body::before {
+        content: "";
+        position: absolute;
+        width: 200%;
+        height: 200%;
+        background: radial-gradient(
+          circle,
+          rgba(255, 255, 255, 0.1) 1px,
+          transparent 1px
+        );
+        background-size: 50px 50px;
+        animation: moveGrid 20s linear infinite;
+        pointer-events: none;
+      }
+
+      @keyframes moveGrid {
+        0% {
+          transform: translate(0, 0);
+        }
+        100% {
+          transform: translate(50px, 50px);
+        }
+      }
+
+      .container {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border-radius: 24px;
+        box-shadow: var(--shadow);
+        padding: 50px;
+        width: 100%;
+        max-width: 900px;
+        position: relative;
+        animation: slideUp 0.6s ease-out;
+      }
+
+      @keyframes slideUp {
+        from {
+          opacity: 0;
+          transform: translateY(30px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .header {
+        text-align: center;
+        margin-bottom: 50px;
+      }
+
+      h1 {
+        background: linear-gradient(
+          135deg,
+          var(--primary) 0%,
+          var(--secondary) 100%
+        );
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 15px;
+        font-size: 42px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+      }
+
+      .subtitle {
+        color: #64748b;
+        font-size: 18px;
+        margin-bottom: 15px;
+      }
+
+      .welcome-text {
+        color: #475569;
+        font-size: 16px;
+        max-width: 600px;
+        margin: 0 auto;
+        line-height: 1.6;
+      }
+
+      .status-alert {
+        background: linear-gradient(135deg, #fef3c7 0%, #fcd34d 100%);
+        border: 1px solid #f59e0b;
+        border-radius: 12px;
+        padding: 15px 20px;
+        margin-bottom: 30px;
+        font-size: 14px;
+        color: #92400e;
+      }
+
+      .lens-options {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 30px;
+        margin-top: 40px;
+      }
+
+      .lens-card {
+        background: white;
+        border-radius: 20px;
+        padding: 40px 30px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        border: 3px solid transparent;
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      }
+
+      .lens-card.disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        background: #f8f9fa;
+      }
+
+      .lens-card::before {
+        content: "";
+        position: absolute;
+        inset: -3px;
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        border-radius: 20px;
+        opacity: 0;
+        transition: opacity 0.3s;
+        z-index: -1;
+      }
+
+      .lens-card:not(.disabled):hover {
+        transform: translateY(-5px) scale(1.02);
+        box-shadow: var(--glass-shadow);
+      }
+
+      .lens-card:not(.disabled):hover::before {
+        opacity: 1;
+      }
+
+      .lens-card.selected {
+        border-color: var(--primary);
+        transform: translateY(-5px) scale(1.02);
+        box-shadow: var(--glass-shadow);
+      }
+
+      .lens-card.selected::before {
+        opacity: 0.1;
+      }
+
+      .lens-icon {
+        width: 80px;
+        height: 80px;
+        margin: 0 auto 25px;
+        border-radius: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 36px;
+        transition: all 0.3s;
+      }
+
+      .custom-lens .lens-icon {
+        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+      }
+
+      .google-lens .lens-icon {
+        background: linear-gradient(
+          135deg,
+          #ea4335 0%,
+          #4285f4 25%,
+          #34a853 50%,
+          #fbbc05 75%,
+          #ea4335 100%
+        );
+      }
+
+      .lens-card:not(.disabled):hover .lens-icon {
+        transform: scale(1.1) rotate(5deg);
+      }
+
+      .lens-title {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--dark);
+        margin-bottom: 15px;
+      }
+
+      .lens-description {
+        color: #64748b;
+        font-size: 15px;
+        line-height: 1.6;
+        margin-bottom: 25px;
+      }
+
+      .lens-features {
+        list-style: none;
+        text-align: left;
+      }
+
+      .lens-features li {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+        font-size: 14px;
+        color: #475569;
+      }
+
+      .lens-features li::before {
+        content: "✓";
+        color: var(--success);
+        font-weight: bold;
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(16, 185, 129, 0.1);
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .lens-features li.disabled::before {
+        content: "✗";
+        color: var(--error);
+        background: rgba(239, 68, 68, 0.1);
+      }
+
+      .action-buttons {
+        margin-top: 50px;
+        display: flex;
+        justify-content: center;
+        gap: 20px;
+      }
+
+      .btn {
+        padding: 16px 40px;
+        border: none;
+        border-radius: 12px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        position: relative;
+        overflow: hidden;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .btn-primary {
+        background: linear-gradient(
+          135deg,
+          var(--primary) 0%,
+          var(--secondary) 100%
+        );
+        color: white;
+        box-shadow: 0 4px 6px -1px rgba(99, 102, 241, 0.3);
+      }
+
+      .btn::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(255, 255, 255, 0.3),
+          transparent
+        );
+        transition: left 0.5s;
+      }
+
+      .btn:hover {
+        transform: translateY(-2px);
+      }
+
+      .btn-primary:hover {
+        box-shadow: 0 10px 20px -5px rgba(99, 102, 241, 0.4);
+      }
+
+      .btn:hover::before {
+        left: 100%;
+      }
+
+      .selected-indicator {
+        position: absolute;
+        top: 15px;
+        right: 15px;
+        width: 30px;
+        height: 30px;
+        background: var(--success);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        transform: scale(0);
+        transition: transform 0.3s;
+      }
+
+      .lens-card.selected .selected-indicator {
+        transform: scale(1);
+      }
+
+      .status-badge {
+        position: absolute;
+        top: 15px;
+        left: 15px;
+        padding: 4px 8px;
+        border-radius: 20px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      .status-badge.available {
+        background: rgba(16, 185, 129, 0.1);
+        color: var(--success);
+      }
+
+      .status-badge.unavailable {
+        background: rgba(239, 68, 68, 0.1);
+        color: var(--error);
+      }
+
+      @media (max-width: 768px) {
+        .container {
+          padding: 30px 20px;
+        }
+
+        .lens-options {
+          grid-template-columns: 1fr;
+          gap: 20px;
+        }
+
+        h1 {
+          font-size: 32px;
+        }
+
+        .action-buttons {
+          flex-direction: column;
+          align-items: center;
+        }
+
+        .btn {
+          width: 100%;
+          max-width: 300px;
+          justify-content: center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>Business Scanner</h1>
+        <p class="subtitle">İşletme Tarama Platformu</p>
+        <p class="welcome-text">
+          Ürün fotoğraflarından işletme bilgilerini keşfetmek için tercih
+          ettiğiniz lens teknolojisini seçin. Her iki seçenek de güçlü yapay
+          zeka ile desteklenmektedir.
+        </p>
+      </div>
+
+      <div id="statusAlert" class="status-alert" style="display: none">
+        <strong>⚠️ Bilgi:</strong> <span id="statusMessage"></span>
+      </div>
+
+      <div class="lens-options">
+        <div class="lens-card custom-lens" data-lens="custom" id="customLens">
+          <div class="status-badge available">Kullanılabilir</div>
+          <div class="selected-indicator">✓</div>
+          <div class="lens-icon">🔍</div>
+          <h3 class="lens-title">Özel Lens Sistemi</h3>
+          <p class="lens-description">
+            Bizim geliştirdiğimiz özelleştirilmiş görüntü analiz sistemi.
+            İşletme odaklı optimizasyonlar ve yerel pazar analizi.
+          </p>
+          <ul class="lens-features">
+            <li>Türkiye pazarına özel optimizasyon</li>
+            <li>İşletme odaklı ürün tanıma</li>
+            <li>Hızlı ve güvenilir sonuçlar</li>
+            <li>Yerel veritabanı entegrasyonu</li>
+            <li>Gizlilik odaklı işleme</li>
+          </ul>
+        </div>
+
+        <div class="lens-card google-lens" data-lens="google" id="googleLens">
+          <div class="status-badge unavailable" id="googleStatusBadge">
+            Kontrol ediliyor...
+          </div>
+          <div class="selected-indicator">✓</div>
+          <div class="lens-icon">📷</div>
+          <h3 class="lens-title">Google Lens</h3>
+          <p class="lens-description">
+            Google'ın güçlü görüntü tanıma teknolojisi. Milyarlarca görüntü ile
+            eğitilmiş yapay zeka sistemi.
+          </p>
+          <ul class="lens-features" id="googleFeatures">
+            <li class="disabled">Kapsamlı ürün veritabanı</li>
+            <li class="disabled">Çoklu dil desteği</li>
+            <li class="disabled">Gelişmiş nesne tanıma</li>
+            <li class="disabled">Küresel ürün bilgisi</li>
+            <li class="disabled">Sürekli güncellenen AI</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="action-buttons">
+        <button
+          class="btn btn-primary"
+          id="continueBtn"
+          onclick="continueLensSelection()"
+        >
+          <span>Seçimle Devam Et</span>
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <script>
+      let selectedLens = "custom";
+      let lensStatus = {
+        openai_available: false,
+        google_vision_available: false,
+      };
+
+      // Sayfa yüklendiğinde lens durumlarını kontrol et
+      document.addEventListener("DOMContentLoaded", function () {
+        checkLensStatus();
+      });
+
+      async function checkLensStatus() {
+        try {
+          const response = await fetch("/api/lens_status");
+          const data = await response.json();
+          lensStatus = data;
+
+          updateLensCards(data);
+        } catch (error) {
+          console.error("Lens status check failed:", error);
+          showStatusAlert(
+            "Lens durumları kontrol edilemedi. Varsayılan ayarlar kullanılacak."
+          );
+        }
+      }
+
+      function updateLensCards(status) {
+        const googleLens = document.getElementById("googleLens");
+        const googleStatusBadge = document.getElementById("googleStatusBadge");
+        const googleFeatures = document.getElementById("googleFeatures");
+        const statusAlert = document.getElementById("statusAlert");
+        const statusMessage = document.getElementById("statusMessage");
+
+        if (status.google_vision_available) {
+          // Google Lens kullanılabilir
+          googleLens.classList.remove("disabled");
+          googleStatusBadge.textContent = "Kullanılabilir";
+          googleStatusBadge.className = "status-badge available";
+
+          // Features'ları aktif yap
+          googleFeatures.querySelectorAll("li").forEach((li) => {
+            li.classList.remove("disabled");
+          });
+
+          showStatusAlert("✅ Her iki lens sistemi de kullanılabilir!");
+        } else {
+          // Google Lens kullanılamaz
+          googleLens.classList.add("disabled");
+          googleStatusBadge.textContent = "Kullanılamaz";
+          googleStatusBadge.className = "status-badge unavailable";
+
+          if (!status.openai_available) {
+            showStatusAlert(
+              "⚠️ Hiçbir lens sistemi kullanılamaz. API anahtarlarını kontrol edin."
+            );
+          } else {
+            showStatusAlert(
+              "⚠️ Google Lens kullanılamaz. Sadece özel lens sistemi aktif."
+            );
+          }
+        }
+
+        // OpenAI durumunu kontrol et
+        if (!status.openai_available) {
+          document.getElementById("customLens").classList.add("disabled");
+          document.querySelector("#customLens .status-badge").textContent =
+            "Kullanılamaz";
+          document.querySelector("#customLens .status-badge").className =
+            "status-badge unavailable";
+        }
+      }
+
+      function showStatusAlert(message) {
+        const statusAlert = document.getElementById("statusAlert");
+        const statusMessage = document.getElementById("statusMessage");
+
+        statusMessage.textContent = message;
+        statusAlert.style.display = "block";
+      }
+
+      // Lens kartı seçimi
+      document.querySelectorAll(".lens-card").forEach((card) => {
+        card.addEventListener("click", function () {
+          // Disabled kartlara tıklanamaz
+          if (this.classList.contains("disabled")) {
+            return;
+          }
+
+          // Önceki seçimi kaldır
+          document
+            .querySelectorAll(".lens-card")
+            .forEach((c) => c.classList.remove("selected"));
+
+          // Yeni seçimi ekle
+          this.classList.add("selected");
+          selectedLens = this.dataset.lens;
+        });
+      });
+
+      // Varsayılan seçimi ayarla
+      document
+        .querySelector(".lens-card.custom-lens")
+        .classList.add("selected");
+
+      function continueLensSelection() {
+        // Seçilen lens kullanılabilir mi kontrol et
+        if (selectedLens === "google" && !lensStatus.google_vision_available) {
+          alert(
+            "Google Lens şu anda kullanılamaz. Lütfen özel lens sistemini seçin."
+          );
+          return;
+        }
+
+        if (selectedLens === "custom" && !lensStatus.openai_available) {
+          alert(
+            "Özel lens sistemi şu anda kullanılamaz. API anahtarını kontrol edin."
+          );
+          return;
+        }
+
+        // Seçimi kaydet
+        localStorage.setItem("selectedLens", selectedLens);
+
+        // Scanner sayfasına yönlendir
+        window.location.href = "/scanner";
+      }
+
+      // Klavye kısayolları
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          continueLensSelection();
+        }
+        if (e.key === "1") {
+          const customLens = document.querySelector(".lens-card.custom-lens");
+          if (!customLens.classList.contains("disabled")) {
+            customLens.click();
+          }
+        }
+        if (e.key === "2") {
+          const googleLens = document.querySelector(".lens-card.google-lens");
+          if (!googleLens.classList.contains("disabled")) {
+            googleLens.click();
+          }
+        }
+      });
+    </script>
+  </body>
+</html>
