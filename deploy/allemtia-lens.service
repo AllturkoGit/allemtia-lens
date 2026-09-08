@@ -1,0 +1,35 @@
+# Business Scanner (allemtia-lens) - gunicorn servisi
+#
+# Kurulum:
+#   sudo cp deploy/allemtia-lens.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now allemtia-lens
+#
+# Kontrol:
+#   systemctl status allemtia-lens
+#   journalctl -u allemtia-lens -f
+
+[Unit]
+Description=Business Scanner (allemtia-lens) gunicorn
+After=network.target
+
+[Service]
+Type=simple
+User=allturko
+Group=allturko
+WorkingDirectory=/home/allturko/wwwroot/search.allemtia.com.tr
+
+# -w 1: is takibi surec bellegindeki active_scans sozlugunde tutuluyor (app.py:40).
+# Birden fazla worker'da her surecin ayri kopyasi olur ve scan_status
+# istekleri isi bulamaz. Es zamanlilik thread'lerle saglanir.
+ExecStart=/usr/local/bin/gunicorn -w 1 --threads 8 --timeout 120 -b 127.0.0.1:5008 wsgi:app
+
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
