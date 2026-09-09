@@ -426,12 +426,15 @@ ALLEMTIA_API = os.getenv(
 ).rstrip("/")
 ALLEMTIA_TENANT_ID = os.getenv("ALLEMTIA_TENANT_ID", "")
 ALLEMTIA_SITE = os.getenv("ALLEMTIA_SITE_URL", "https://allemtia.com.tr").rstrip("/")
+PRODUCT_PATH = os.getenv("ALLEMTIA_PRODUCT_PATH", "shop-details").strip("/")
 SEARCH_PAGE_SIZE = 24  # API varsayilaniyla ayni; buyuk sayfalar yaniti yavaslatiyor
 
 
 def product_url(product):
+    # Urun detay rotasi frontend'de src/app/shop-details/[id]/page.tsx;
+    # yani /shop-details/<slug>. Onceki /urun/<slug> tahminiydi ve 404 veriyordu.
     slug = product.get("slug")
-    return f"{ALLEMTIA_SITE}/urun/{slug}" if slug else ALLEMTIA_SITE
+    return f"{ALLEMTIA_SITE}/{PRODUCT_PATH}/{slug}" if slug else ALLEMTIA_SITE
 
 
 def _kok(kelime):
