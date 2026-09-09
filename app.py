@@ -206,7 +206,7 @@ def analyze_image_with_gemini(image_path):
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY tanımlı değil")
 
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
     payload = {
         "contents": [
             {
@@ -364,11 +364,12 @@ PROVIDERS = {
 def analyze_image_hybrid(image_path, lens_type="custom"):
     """Secilen lensi dener, basarisiz olursa yapilandirilmis digerlerine duser.
 
-    Eskiden her hata sabit sekilde OpenAI'a dusuyordu; OpenAI kotasi bitince
-    hicbir lens calismiyordu.
+    (urun_adi, gercekten_kullanilan_lens) doner. Eskiden her hata sabit sekilde
+    OpenAI'a dusuyordu; OpenAI kotasi bitince hicbir lens calismiyordu.
     """
     order = [lens_type] + [k for k in PROVIDERS if k != lens_type]
     errors = []
+    no_product = False  # en az bir lens goruntuyu okudu ama urun goremedi
 
     for name in order:
         func, is_available = PROVIDERS[name]
@@ -378,16 +379,23 @@ def analyze_image_hybrid(image_path, lens_type="custom"):
             result = (func(image_path) or "").strip()
             if not result:
                 raise RuntimeError("boş yanıt")
-            # Lens urunu tanimadiysa siradakini dene, hemen pes etme.
-            if NO_PRODUCT.lower() in result.lower() and name != order[-1]:
-                errors.append(f"{name}: ürün tanınamadı")
+            # "Urun yok" teknik bir hata degil, gecerli bir cevap. Yine de
+            # baska bir lens tanıyabilir diye zincire devam ediyoruz.
+            if NO_PRODUCT.lower() in result.lower():
+                print(f"Lens '{name}': görüntüde ürün görülmedi.")
+                no_product = True
                 continue
             if name != lens_type:
                 print(f"'{lens_type}' başarısız oldu, '{name}' ile devam edildi.")
-            return result
+            return result, name
         except Exception as e:
             print(f"Lens '{name}' hatası: {e}")
             errors.append(f"{name}: {e}")
+
+    # Hicbir lens urun bulamadi ama en az biri goruntuyu basariyla okudu:
+    # kullaniciya teknik hata degil, anlasilir "urun yok" mesaji donmeli.
+    if no_product:
+        return NO_PRODUCT, lens_type
 
     if not errors:
         raise RuntimeError(
@@ -1005,7 +1013,7 @@ def analyze_image_endpoint():
                 400,
             )
 
-        product_name = analyze_image_hybrid(temp_path, lens_type)
+        product_name, used_lens = analyze_image_hybrid(temp_path, lens_type)
 
         if NO_PRODUCT.lower() in product_name.lower():
             return (
@@ -1017,7 +1025,7 @@ def analyze_image_endpoint():
             {
                 "success": True,
                 "product": product_name,
-                "lens_used": lens_type,
+                "lens_used": used_lens,
                 "google_vision_available": GOOGLE_VISION_AVAILABLE,
             }
         )

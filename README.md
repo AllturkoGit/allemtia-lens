@@ -44,7 +44,7 @@ OPENAI_API_KEY=...                 # https://platform.openai.com (kredi gerektir
 GOOGLE_APPLICATION_CREDENTIALS=google-vision-credentials.json
 
 # Opsiyonel
-GEMINI_MODEL=gemini-2.5-flash      # varsayilan; hesabinizda yoksa degistirin
+GEMINI_MODEL=gemini-3.6-flash      # varsayilan; hesabinizda yoksa degistirin
 OPENAI_MODEL=gpt-4o
 CORS_ORIGINS=                      # bos = kapali (arayuz ayni origin'den servis ediliyor)
 FLASK_ENV=production               # SECRET_KEY yoksa acilista hata verir
