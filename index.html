@@ -744,6 +744,7 @@
         google: "Google Lens",
       };
       let selectedImage = null;
+      let searchQuery = null; // gorsel aramasinda esanlam listesi
 
       // Sayfa yüklendiğinde lens seçimini kontrol et
       document.addEventListener("DOMContentLoaded", function () {
@@ -1022,8 +1023,10 @@
               return;
             }
 
+            // Etikette kisa ad, aramada modelin verdigi tum esanlamlar.
             sector = analyzeData.product;
             document.getElementById("sector").value = sector;
+            searchQuery = analyzeData.query || sector;
 
             // Show product tag with lens info
             const productTag = document.getElementById("productTag");
@@ -1041,6 +1044,7 @@
         } else {
           // Keyword search
           sector = document.getElementById("keywordInput").value.trim();
+          searchQuery = null;
 
           if (!sector) {
             showStatus("Lütfen bir anahtar kelime girin!", "error");
@@ -1073,7 +1077,7 @@
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              keyword: document.getElementById("sector").value,
+              keyword: searchQuery || document.getElementById("sector").value,
             }),
           });
 

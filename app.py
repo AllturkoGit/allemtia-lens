@@ -99,13 +99,22 @@ def purge_old_scans():
 
 # Katalog Turkce oldugu icin urun adi da Turkce isteniyor. Ingilizce donseydi
 # ("glass cup") Turkce katalogda ("Cam Bardak") hicbir sey eslesmezdi.
+# Modelin verdigi tek ad katalogda cogu zaman tutmuyor: model "Chiller" der,
+# katalogda "Endustriyel Evaporatif Sogutucu" yazar - ortak kelime yok. Bu yuzden
+# tek ad yerine, en spesifikten en genele dogru birkac Turkce esanlam isteniyor;
+# arama bunlari sirayla deneyip ilk tutani kullaniyor.
 PRODUCT_PROMPT = (
-    "Görseldeki ürünün adını TÜRKÇE olarak, en az kelimeyle yaz. "
-    "Ticari/sanayi ürünlerinde malzemeyi de belirt (ornek: 'cam bardak', "
-    "'aluminyum boru', 'demir profil') - sadece malzeme adi ('cam', 'aluminyum') "
-    "yazma. Tercihen bir, en fazla iki kelime. Aciklama, noktalama veya ek "
-    "cumle yazma. Görselde bir ürün yoksa sadece sunu yaz: "
-    "Görselde ürün yok"
+    "Görseldeki ürünü TÜRKÇE olarak adlandır. Tek bir ad yerine, virgülle "
+    "ayrılmış 2-4 alternatif ad yaz; en spesifikten en genele doğru sırala ve "
+    "Türkiye'de bu ürün için yaygın kullanılan farklı adlandırmaları da ekle "
+    "(yabancı kökenli ad kullanılıyorsa hem onu hem Türkçe karşılığını yaz).\n"
+    "Örnekler:\n"
+    "chiller, su soğutma grubu, soğutucu, soğutma ünitesi\n"
+    "alüminyum boru, alüminyum profil, boru\n"
+    "cam bardak, bardak\n"
+    "Her ad en fazla üç kelime olsun. Açıklama, numaralandırma veya ek cümle "
+    "yazma; sadece virgülle ayrılmış adları yaz. "
+    "Görselde bir ürün yoksa sadece şunu yaz: Görselde ürün yok"
 )
 
 NO_PRODUCT = "Görselde ürün yok"
@@ -425,29 +434,67 @@ def product_url(product):
     return f"{ALLEMTIA_SITE}/urun/{slug}" if slug else ALLEMTIA_SITE
 
 
+def _kok(kelime):
+    """Turkce ek kirpma yerine kaba kok: 5 karakterden uzun kelimeyi kisaltir.
+
+    Turkce eklemeli bir dil; model "sogutma" der, katalogda "Sogutucu" yazar.
+    Ikisinin de ilk 5 harfi "sogut" oldugu icin bu kaba kirpma ikisini
+    esleyebiliyor. Kelime zaten kisaysa oldugu gibi birakilir.
+    """
+    return kelime[:5] if len(kelime) > 5 else kelime
+
+
+def arama_adaylari(keyword):
+    """Anahtar kelimeyi denenecek arama terimleri listesine cevirir.
+
+    Girdi virgullu olabilir ("chiller cihazi, su sogutma grubu") - gorsel
+    analizi esanlam listesi donduruyor. Once tam esanlamlar denenir; hicbiri
+    tutmazsa kelime kokleri denenir (uzun kelimeler once, daha ayirt edici).
+    """
+    esanlamlar = [t.strip() for t in keyword.split(",") if t.strip()]
+    if not esanlamlar:
+        return []
+
+    adaylar = list(esanlamlar)
+
+    # Tam esanlamlar tutmazsa: kelime kokleri. Uzun kelime daha ayirt edici
+    # oldugu icin once denenir; 4 harften kisa parcalar cok genel, atlanir.
+    kokler = []
+    for t in esanlamlar:
+        for kelime in sorted(t.split(), key=len, reverse=True):
+            if len(kelime) >= 4:
+                kokler.append(_kok(kelime))
+    adaylar.extend(kokler)
+
+    gorulen, benzersiz = set(), []
+    for a in adaylar:
+        k = a.lower()
+        if k not in gorulen:
+            gorulen.add(k)
+            benzersiz.append(a)
+    return benzersiz
+
+
 def search_catalog(keyword, limit=SEARCH_PAGE_SIZE, on_page=None):
-    """allemtia katalogunda arar; sonuc yoksa terimi genisletir.
+    """allemtia katalogunda arar; ilk tutan terimin sonuclarini dondurur.
 
     Gorsel analizinden gelen ad katalog adlandirmasiyla birebir tutmuyor:
-    model "metal boru" der, katalogda "Aluminyum Boru 40mm" vardir. Backend
-    tum kelimelerin eslesmesini aradigi icin bu 0 sonuc verir. Turkcede
-    tamlamanin ana adi sonda oldugundan ("metal BORU"), tam terim bos donerse
-    son kelimeyle tekrar deneniyor.
+    model "Chiller" der, katalogda "Endustriyel Evaporatif Sogutucu" yazar.
+    Bu yuzden model esanlam listesi donduruyor ve hepsi sirayla deneniyor.
 
-    (urunler, kullanilan_terim) doner; arayuz daraltilmis terimi gosterebilsin.
+    (urunler, kullanilan_terim) doner; arayuz hangi terimin tuttugunu gosterir.
     """
-    terms = [t for t in keyword.split() if t]
-    adaylar = [keyword]
-    if len(terms) > 1:
-        adaylar.append(terms[-1])
+    adaylar = arama_adaylari(keyword)
+    if not adaylar:
+        return [], keyword
 
     for aday in adaylar:
-        sonuc = _search_once(aday, limit, on_page if aday == adaylar[0] else None)
+        sonuc = _search_once(aday, limit, None)
         if sonuc:
-            if aday != keyword and on_page:
+            if on_page:
                 on_page(sonuc)
             return sonuc, aday
-    return [], keyword
+    return [], adaylar[0]
 
 
 def _search_once(keyword, limit=SEARCH_PAGE_SIZE, on_page=None):
@@ -687,10 +734,15 @@ def analyze_image_endpoint():
                 400,
             )
 
+        # Model esanlam listesi donduruyor ("chiller, su sogutma grubu, ...").
+        # Arayuzde ilkini gosteriyoruz; arama ise listenin tamamini deniyor.
+        adaylar = arama_adaylari(product_name)
         return jsonify(
             {
                 "success": True,
-                "product": product_name,
+                "product": adaylar[0] if adaylar else product_name,
+                "query": product_name,
+                "candidates": adaylar,
                 "lens_used": used_lens,
                 "google_vision_available": GOOGLE_VISION_AVAILABLE,
             }
