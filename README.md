@@ -100,36 +100,45 @@ Uygulama http://localhost:5008 adresinde çalışacaktır.
 
 ## Production'da Çalıştırma
 
-Gunicorn ile çalıştırma:
+Uygulama **PM2** ile yönetiliyor (`ecosystem.config.js`).
+
 ```bash
-gunicorn -w 1 --threads 8 --timeout 120 -b 127.0.0.1:5008 wsgi:app
+mkdir -p logs
+pm2 start ecosystem.config.js
+pm2 save                       # yeniden baslatmada ayaga kalksin
 ```
 
-> **`-w 1` zorunludur, tercih değil.** Tarama işleri `active_scans` sözlüğünde
-> süreç belleğinde tutulur. Birden fazla worker'da `start_scan` bir sürece,
-> `scan_status` başka bir sürece düşer ve istemci "Tarama işi bulunamadı"
-> hatası alır. Eş zamanlılık worker ile değil thread ile sağlanır.
-> Ayarlar `gunicorn.conf.py` dosyasında da var; komut satırında `-w` verirseniz
-> dosyadaki değeri ezer.
-
-## Deployment
-
-### Heroku
+Deploy:
 ```bash
-heroku create your-app-name
-heroku config:set OPENAI_API_KEY=your-api-key
-git push heroku main
+./deploy.sh                    # git pull + pm2 reload + dogrulama
 ```
 
-### Docker
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-CMD ["gunicorn", "-w", "1", "--threads", "8", "-b", "0.0.0.0:5008", "wsgi:app"]
+`deploy.sh` her çalıştığında **tek süreç kontrolü** yapar: bir tarama başlatıp
+durumunu 10 kez sorgular, biri bile "bulunamadı" derse hata verip çıkar.
+
+> **Tek süreç zorunludur, tercih değil.** Tarama işleri `active_scans`
+> sözlüğünde süreç belleğinde tutulur. Birden fazla süreçte `start_scan` bir
+> sürece, `scan_status` başka bir sürece düşer ve istemci "Tarama işi
+> bulunamadı" hatası alır. Eş zamanlılık süreçle değil, gunicorn thread'leriyle
+> sağlanır.
+>
+> Bu yüzden `ecosystem.config.js` içinde `instances: 1` ve
+> `exec_mode: "fork"` şarttır. **PM2'nin cluster modu yalnızca Node.js
+> içindir**; Python'da `instances > 1` birbirinden habersiz N ayrı süreç
+> demektir, yani aynı hatanın tekrarı.
+
+Doğrudan gunicorn ile (PM2 olmadan):
+```bash
+gunicorn -w 1 --threads 8 --timeout 120 -b 127.0.0.1:5008 app:app
 ```
+
+### Geçmiş: bu hatayı iki kez yaşadık
+
+Uygulama önce aaPanel'in Python project manager'ıyla çalışıyordu. Panelin
+"Number of processes" alanı komut satırına `-w 4` ekleyip `gunicorn_conf.py`
+içindeki `workers = 1` ayarını **eziyordu**. Sonuç: aramalar sunucuda
+çalışıyor ama sonuçlar tarayıcıya ulaşmıyordu ve kodda hiçbir izi yoktu.
+`deploy.sh`'daki otomatik kontrol bunun tekrarını yakalamak için var.
 
 ## API Endpoints
 
@@ -148,20 +157,25 @@ Kurulum `app.py` içinde tek satır (`NabizFlask(app)`); paket kurulu değilse y
 
 Etkinleştirmek için:
 
-1. Nabız panelinde `allemtia-lens` projesini açın; anahtar ve secret oradan gelir.
+1. Nabız panelinde `search-allemtia-com-tr` projesini açın; `NABIZ_KEY` ve
+   `NABIZ_SECRET` oradan gelir. Anahtar PM2'deki uygulama adıyla (`allemtia-lens`)
+   aynı olmak zorunda değil.
 2. Paketi kurun: `pip install -r requirements.txt` (paket `requirements.txt` içinde
    git URL'i ile tanımlı).
 3. `.env` dosyasına ekleyin:
 
 ```env
 NABIZ_ENABLED=true
-NABIZ_URL=https://<hub-adresi>
-NABIZ_KEY=allemtia-lens
-NABIZ_SECRET=<panelden alinan 64 karakterlik secret>
+NABIZ_URL=https://monitor.allturko.erkpa.com.tr
+NABIZ_KEY=search-allemtia-com-tr
+NABIZ_SECRET=<panelden alinan secret>
 NABIZ_ENV=production
 ```
 
-4. Doğrulayın: `nabiz-durum --test` — ardından panelde proje satırının `Bağlı`
+4. Servisi yeniden başlatın: `pm2 restart allemtia-lens`. Gunicorn ortam
+   değişkenlerini süreç başlarken okur; yeniden başlatılmadan `.env` değişikliği
+   görünmez.
+5. Doğrulayın: `nabiz-durum --test` — ardından panelde proje satırının `Bağlı`
    göründüğünü kontrol edin. Hub geçersiz imzaya da `204` döndüğü için komut tek
    başına yeterli değildir.
 

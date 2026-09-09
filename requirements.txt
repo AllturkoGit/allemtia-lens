@@ -7,6 +7,7 @@ google-cloud-vision==3.4.5
 
 # Nabiz Hub izleme paketi. NABIZ_* degiskenleri tanimli degilse hicbir sey
 # gondermez; kurulum dogrulamasi "nabiz-durum" komutu ile yapilir.
-# Surume sabitli: etiketsiz URL her deploy'da main'in o anki halini ceker ve
-# iki sunucu farkli kod calistirabilir. Yukseltme = buradaki etiketi degistirmek.
-allturko-nabiz @ git+https://github.com/AllturkoGit/nabiz-python.git@v0.1.0
+# Surum sabitlenmiyor: her zaman son surum kurulur. Yukseltme icin
+#   pip install -U --force-reinstall "allturko-nabiz @ git+...nabiz-python.git"
+# Ayni surum numarasinda pip yeniden indirmez; -U tek basina yetmeyebilir.
+allturko-nabiz @ git+https://github.com/AllturkoGit/nabiz-python.git
