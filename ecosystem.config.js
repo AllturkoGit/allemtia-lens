@@ -15,9 +15,13 @@ module.exports = {
 
       // PM2 python'u degil dogrudan gunicorn'u calistiriyor: app.py'deki
       // app.run() Flask'in gelistirme sunucusudur, production icin uygun degil.
-      // Gunicorn'un shebang'i kendi venv python'unu gosterdigi icin
+      // Gunicorn'un kendi shebang'i yorumlayiciyi belirledigi icin
       // interpreter "none".
-      script: "./venv/bin/gunicorn",
+      //
+      // Sunucuda ayri bir sanal ortam yok: bagimliliklar sistem python'una
+      // kurulu ve aaPanel de bu gunicorn'u kullaniyordu. Ileride venv'e
+      // gecilirse burayi <venv>/bin/gunicorn yapmak yeterli.
+      script: "/usr/local/bin/gunicorn",
       interpreter: "none",
 
       // -w 1 ZORUNLU, tercih degil. Tarama isleri active_scans sozlugunde
