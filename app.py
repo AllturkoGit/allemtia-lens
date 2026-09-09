@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 #  app.py   –   Gorsel ile allemtia katalog aramasi (Flask)
 # ---------------------------------------------------------------------------
-import os, time, uuid, threading, traceback
+import os, re, time, uuid, threading, traceback
 import requests, base64
 import tempfile
 from datetime import datetime
@@ -225,7 +225,10 @@ def analyze_image_with_gemini(image_path):
                 ]
             }
         ],
-        "generationConfig": {"maxOutputTokens": 300, "temperature": 0},
+        # gemini-3.6-flash gorunmeyen akil yurutme tokenlari harciyor ve bunlar
+        # da bu butceden dusuyor. 300'de cevap ortadan kesilip
+        # ("...pecific):* chiller (or endustri") cop uretiyordu.
+        "generationConfig": {"maxOutputTokens": 1024, "temperature": 0},
     }
 
     r = requests.post(
@@ -380,9 +383,13 @@ def analyze_image_hybrid(image_path, lens_type="custom"):
         if not is_available():
             continue
         try:
-            result = (func(image_path) or "").strip()
-            if not result:
+            ham = (func(image_path) or "").strip()
+            if not ham:
                 raise RuntimeError("boş yanıt")
+            # "Gorselde urun yok" cevabini temizlik bozmasin diye once bakilir.
+            result = ham if NO_PRODUCT.lower() in ham.lower() else (
+                temizle_model_ciktisi(ham) or ham
+            )
             # "Urun yok" teknik bir hata degil, gecerli bir cevap. Yine de
             # baska bir lens tanıyabilir diye zincire devam ediyoruz.
             if NO_PRODUCT.lower() in result.lower():
@@ -437,6 +444,42 @@ def product_url(product):
     return f"{ALLEMTIA_SITE}/{PRODUCT_PATH}/{slug}" if slug else ALLEMTIA_SITE
 
 
+# Kapanis parantezi istege bagli: cevap MAX_TOKENS ile kesilince
+# "(or endustri" gibi kapanmamis parca kaliyor, o da atilmali.
+_PARANTEZ = re.compile(r"\([^)]*\)?")
+_MARKDOWN = re.compile(r"[*_#`]+")
+
+
+def temizle_model_ciktisi(text):
+    """Modelin serbest metnini virgullu ad listesine indirger.
+
+    Istem "sadece adlari yaz" dese de model bazen markdown, aciklama veya
+    parantezli not ekliyor. Ayrica cevap MAX_TOKENS ile kesilirse yarim
+    kalan satir cop olarak geliyor. Burada bunlar ayiklaniyor.
+    """
+    if not text:
+        return ""
+
+    text = _MARKDOWN.sub("", text)
+    satirlar = [l.strip() for l in text.splitlines() if l.strip()]
+    if not satirlar:
+        return ""
+    # Model aciklama yaparsa adlar genelde virgullu satirda olur; yoksa
+    # ilk satiri al (son satir, kesilmis cop olma ihtimali en yuksek olan).
+    secilen = next((l for l in satirlar if "," in l), satirlar[0])
+
+    adlar = []
+    for ham in secilen.split(","):
+        ad = _PARANTEZ.sub(" ", ham)          # "chiller (or ...)" -> "chiller"
+        ad = ad.split(":")[-1]                # "Most specific: chiller" -> "chiller"
+        ad = _MARKDOWN.sub("", ad).strip(" .-\u2013\u2014")
+        # Urun adi kisa olur; uzun/cok kelimeli parca aciklamadir, atilir.
+        if ad and len(ad) <= 30 and 1 <= len(ad.split()) <= 3:
+            adlar.append(ad)
+
+    return ", ".join(dict.fromkeys(adlar))[:200]
+
+
 def _kok(kelime):
     """Turkce ek kirpma yerine kaba kok: 5 karakterden uzun kelimeyi kisaltir.
 
@@ -445,6 +488,18 @@ def _kok(kelime):
     esleyebiliyor. Kelime zaten kisaysa oldugu gibi birakilir.
     """
     return kelime[:5] if len(kelime) > 5 else kelime
+
+
+# Urunu tanimlayan ad degil, onu niteleyen sifatlar. Kok olarak aranirsa
+# "endus" gibi parcalar aciklamasinda "endustriyel" gecen her seyi getirir.
+# Malzeme adlari (aluminyum, demir, cam...) bilerek DISARIDA: onlar ayirt edici.
+_NITELEYICILER = {
+    "endüstriyel", "endustriyel", "sanayi", "sanayii", "profesyonel",
+    "otomatik", "dijital", "elektrikli", "elektronik", "portatif",
+    "taşınabilir", "tasinabilir", "ticari", "standart", "özel", "ozel",
+    "genel", "yüksek", "yuksek", "büyük", "buyuk", "küçük", "kucuk",
+    "mini", "ağır", "agir", "hafif", "yeni", "modern",
+}
 
 
 def arama_adaylari(keyword):
@@ -460,12 +515,15 @@ def arama_adaylari(keyword):
 
     adaylar = list(esanlamlar)
 
-    # Tam esanlamlar tutmazsa: kelime kokleri. Uzun kelime daha ayirt edici
-    # oldugu icin once denenir; 4 harften kisa parcalar cok genel, atlanir.
+    # Tam esanlamlar tutmazsa: kelime kokleri. Turkcede tamlamanin ana adi
+    # SONDA oldugu icin ("endustriyel CHILLER") kelimeler tersten taranir;
+    # eskiden uzunluga gore siralaniyordu ve "endustriyel" gibi sifatlar one
+    # gecip alakasiz sonuc getiriyordu. Niteleyiciler ve 4 harften kisa
+    # parcalar hic denenmez.
     kokler = []
     for t in esanlamlar:
-        for kelime in sorted(t.split(), key=len, reverse=True):
-            if len(kelime) >= 4:
+        for kelime in reversed(t.split()):
+            if len(kelime) >= 4 and kelime.lower() not in _NITELEYICILER:
                 kokler.append(_kok(kelime))
     adaylar.extend(kokler)
 

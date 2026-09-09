@@ -942,6 +942,31 @@
         })[c]);
       }
 
+      // Sunucu her zaman JSON dondurmez: nginx zaman asiminda (504) veya
+      // uygulama cokerse (502) HTML hata sayfasi doner ve response.json()
+      // "Unexpected token '<'" diye patlar. Kullaniciya bunu gostermek yerine
+      // ne oldugunu anlatan bir mesaj uretiyoruz.
+      async function jsonVeya(response, islem) {
+        const tip = response.headers.get("content-type") || "";
+        if (tip.includes("application/json")) {
+          return await response.json();
+        }
+        const govde = (await response.text()).slice(0, 200);
+        console.error(`${islem}: JSON olmayan yanit`, response.status, govde);
+        if (response.status === 504 || response.status === 408) {
+          throw new Error(
+            `${islem} zaman aşımına uğradı. Görsel büyükse küçültüp tekrar deneyin.`
+          );
+        }
+        if (response.status === 502 || response.status === 503) {
+          throw new Error(`Sunucuya ulaşılamadı (${response.status}).`);
+        }
+        if (response.status === 413) {
+          throw new Error("Görsel çok büyük, daha küçük bir dosya deneyin.");
+        }
+        throw new Error(`Sunucu beklenmeyen bir yanıt döndü (${response.status}).`);
+      }
+
       function showStatus(message, type = "loading") {
         const statusBar = document.getElementById("statusBar");
         statusBar.className = `status-bar active ${type}`;
@@ -1015,7 +1040,7 @@
               }
             );
 
-            const analyzeData = await analyzeResponse.json();
+            const analyzeData = await jsonVeya(analyzeResponse, "Resim analizi");
 
             if (!analyzeData.success) {
               showStatus("Hata: " + analyzeData.error, "error");
@@ -1081,7 +1106,7 @@
             }),
           });
 
-          const data = await response.json();
+          const data = await jsonVeya(response, "Arama");
 
           if (data.success) {
             currentJobId = data.job_id;
@@ -1106,7 +1131,7 @@
           const response = await fetch(
             `${API_URL}/scan_status/${currentJobId}`
           );
-          const data = await response.json();
+          const data = await jsonVeya(response, "Durum sorgusu");
 
           if (data.status === "error") {
             clearInterval(statusCheckInterval);
