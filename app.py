@@ -104,7 +104,10 @@ def purge_old_scans():
 # tek ad yerine, en spesifikten en genele dogru birkac Turkce esanlam isteniyor;
 # arama bunlari sirayla deneyip ilk tutani kullaniyor.
 PRODUCT_PROMPT = (
-    "Görseldeki ürünü TÜRKÇE olarak adlandır. Tek bir ad yerine, virgülle "
+    "Ürünün üzerinde okunabilen bir MARKA veya MODEL yazısı varsa, onu "
+    "İLK terim olarak yaz (göründüğü gibi; iki kelimeyse aralarında boşluk "
+    "bırak). Marka yazısı yoksa bu adımı atla.\n"
+    "Ardından görseldeki ürünü TÜRKÇE olarak adlandır. Tek bir ad yerine, virgülle "
     "ayrılmış 2-4 alternatif ad yaz; en spesifikten en genele doğru sırala ve "
     "Türkiye'de bu ürün için yaygın kullanılan farklı adlandırmaları da ekle "
     "(yabancı kökenli ad kullanılıyorsa hem onu hem Türkçe karşılığını yaz).\n"
@@ -493,6 +496,16 @@ def _kok(kelime):
 # Urunu tanimlayan ad degil, onu niteleyen sifatlar. Kok olarak aranirsa
 # "endus" gibi parcalar aciklamasinda "endustriyel" gecen her seyi getirir.
 # Malzeme adlari (aluminyum, demir, cam...) bilerek DISARIDA: onlar ayirt edici.
+# "grubu", "cihazi", "unitesi" gibi genel sozcukler tamlamanin sonunda durur
+# ama urunu tanimlamaz: "su sogutma GRUBU"nda anlamli kelime "sogutma"dir.
+# Bunlar atlanip bir onceki kelimeye bakilir.
+_GENEL_ADLAR = {
+    "grubu", "grup", "cihazı", "cihazi", "cihaz", "ünitesi", "unitesi",
+    "ünite", "unite", "sistemi", "sistem", "ekipmanı", "ekipmani",
+    "ekipman", "aleti", "alet", "aygıtı", "aygiti", "aygıt", "seti", "set",
+    "tipi", "tip", "modeli", "model", "ürünü", "urunu", "ürün", "urun",
+}
+
 _NITELEYICILER = {
     "endüstriyel", "endustriyel", "sanayi", "sanayii", "profesyonel",
     "otomatik", "dijital", "elektrikli", "elektronik", "portatif",
@@ -520,11 +533,28 @@ def arama_adaylari(keyword):
     # eskiden uzunluga gore siralaniyordu ve "endustriyel" gibi sifatlar one
     # gecip alakasiz sonuc getiriyordu. Niteleyiciler ve 4 harften kisa
     # parcalar hic denenmez.
+    # SADECE ana ad (son kelime). Eskiden tum kelimeler deneniyordu ve
+    # "kalip sartlandirici" tutmayinca niteleyen kisim "kalip" araniyor,
+    # chiller fotografina 6 kalip urunu geliyordu. Niteleyen kelime urunu
+    # tanimlamaz; ana ad tutmuyorsa sonuc yok demektir.
+    # Her esanlamdan TEK kok: sondan basa dogru ilk "anlamli" kelime.
+    # Sadece son kelimeyi almak yetmiyordu ("su sogutma grubu" -> "grubu",
+    # sonuc yok); tum kelimeleri denemek ise gurultu yapiyordu
+    # ("kalip sartlandirici" -> "kalip" -> 6 alakasiz kalip urunu).
     kokler = []
     for t in esanlamlar:
-        for kelime in reversed(t.split()):
-            if len(kelime) >= 4 and kelime.lower() not in _NITELEYICILER:
-                kokler.append(_kok(kelime))
+        parcalar = t.split()
+        anlamli = next(
+            (
+                k for k in reversed(parcalar)
+                if len(k) >= 4
+                and k.lower() not in _GENEL_ADLAR
+                and k.lower() not in _NITELEYICILER
+            ),
+            None,
+        )
+        if anlamli:
+            kokler.append(_kok(anlamli))
     adaylar.extend(kokler)
 
     gorulen, benzersiz = set(), []
