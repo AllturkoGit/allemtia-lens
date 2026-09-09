@@ -240,6 +240,24 @@ def analyze_image_with_gemini(image_path):
         json=payload,
         timeout=60,
     )
+    if r.status_code == 429:
+        # Ucretsiz katman dakika basina istek siniri koyuyor. Ham hata
+        # metni cok uzun; kullaniciya ne kadar bekleyecegini soylemek yeterli.
+        saniye = None
+        try:
+            for d in r.json().get("error", {}).get("details", []):
+                if "retryDelay" in d:
+                    saniye = int(float(str(d["retryDelay"]).rstrip("s")))
+        except (ValueError, TypeError, AttributeError):
+            pass
+        if saniye is None:
+            m = re.search(r"retry in ([\d.]+)s", r.text)
+            saniye = int(float(m.group(1))) if m else None
+        bekle = f"~{saniye + 1} saniye" if saniye else "bir dakika"
+        raise RuntimeError(
+            f"Gemini kota sınırı aşıldı (ücretsiz katman). {bekle} sonra "
+            "tekrar deneyin."
+        )
     if not r.ok:
         raise RuntimeError(f"Gemini ({r.status_code}) {api_error_detail(r)}")
 
@@ -416,7 +434,17 @@ def analyze_image_hybrid(image_path, lens_type="custom"):
             "Hiçbir görsel analiz sağlayıcısı yapılandırılmamış "
             "(GEMINI_API_KEY / OPENAI_API_KEY / GOOGLE_APPLICATION_CREDENTIALS)"
         )
-    raise RuntimeError(" | ".join(errors))
+
+    # Tum saglayicilarin ham hatasini birlestirmek okunmaz bir yigin
+    # uretiyordu (Google Vision tek basina 700+ karakter). Kullaniciya
+    # SECILEN lensin hatasi gosteriliyor; digerleri zaten loglandi.
+    birincil = next(
+        (e for e in errors if e.startswith(f"{lens_type}:")), errors[0]
+    )
+    mesaj = birincil.split(":", 1)[-1].strip()[:200]
+    if len(errors) > 1:
+        mesaj += f" (diğer {len(errors) - 1} sağlayıcı da başarısız oldu)"
+    raise RuntimeError(mesaj)
 
 
 # ---------------------------------------------------------------------------
