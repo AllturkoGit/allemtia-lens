@@ -739,9 +739,11 @@
       let statusCheckInterval = null;
       const API_URL = '/api';
       const LENS_NAMES = {
-        custom: "Özel Lens Sistemi",
-        gemini: "Gemini",
+        gemini: "Özel Lens Sistemi",
         google: "Google Lens",
+        // Zincir OpenAI'a duserse etiket dogruyu soylesin; secim ekraninda
+        // karti yok ama backend'de yedek olarak duruyor.
+        custom: "OpenAI (yedek)",
       };
       let selectedImage = null;
       let searchQuery = null; // gorsel aramasinda esanlam listesi
@@ -749,7 +751,7 @@
       // Sayfa yüklendiğinde lens seçimini kontrol et
       document.addEventListener("DOMContentLoaded", function () {
         // localStorage'dan lens seçimini al
-        const lensType = localStorage.getItem("selectedLens") || "custom";
+        const lensType = localStorage.getItem("selectedLens") || "gemini";
 
         // Lens bilgisini göster
         showLensInfo(lensType);
@@ -1022,7 +1024,7 @@
           }
 
           // Lens türünü al
-          const lensType = localStorage.getItem("selectedLens") || "custom";
+          const lensType = localStorage.getItem("selectedLens") || "gemini";
           const lensName = LENS_NAMES[lensType] || lensType;
 
           showStatus(`${lensName} ile resim analiz ediliyor...`, "loading");
@@ -1054,14 +1056,24 @@
             searchQuery = analyzeData.query || sector;
 
             // Show product tag with lens info
+            const kullanilan = analyzeData.lens_used;
+            const kullanilanAd = LENS_NAMES[kullanilan] || kullanilan;
             const productTag = document.getElementById("productTag");
-            productTag.textContent = `${sector} (${
-              LENS_NAMES[analyzeData.lens_used] || analyzeData.lens_used
-            })`;
+            productTag.textContent = `${sector} (${kullanilanAd})`;
             productTag.style.display = "inline-block";
 
-            // Wait a bit to show the product name
-            await new Promise((resolve) => setTimeout(resolve, 1500));
+            // Secilen lens basarisiz olup zincir baskasina dustuyse bunu
+            // soyle; kullanici sectiginden farkli bir sistemin cevapladigini
+            // bilmeli (ornegin Google Vision faturalandirma kapaliyken).
+            if (kullanilan && kullanilan !== lensType) {
+              showStatus(
+                `${lensName} kullanılamadı, ${kullanilanAd} ile analiz edildi: ${sector}`,
+                "success"
+              );
+              await new Promise((resolve) => setTimeout(resolve, 2500));
+            } else {
+              await new Promise((resolve) => setTimeout(resolve, 1500));
+            }
           } catch (error) {
             showStatus("Resim analiz hatası: " + error.message, "error");
             return;

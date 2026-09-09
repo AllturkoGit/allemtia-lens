@@ -199,10 +199,6 @@
         transition: all 0.3s;
       }
 
-      .custom-lens .lens-icon {
-        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-      }
-
       .gemini-lens .lens-icon {
         background: linear-gradient(135deg, #4285f4 0%, #9b72cb 50%, #d96570 100%);
       }
@@ -417,41 +413,23 @@
       </div>
 
       <div class="lens-options">
-        <div class="lens-card custom-lens" data-lens="custom" id="customLens">
-          <div class="status-badge available">Kullanılabilir</div>
-          <div class="selected-indicator">✓</div>
-          <div class="lens-icon">🔍</div>
-          <h3 class="lens-title">Özel Lens Sistemi</h3>
-          <p class="lens-description">
-            Bizim geliştirdiğimiz özelleştirilmiş görüntü analiz sistemi.
-            İşletme odaklı optimizasyonlar ve yerel pazar analizi.
-          </p>
-          <ul class="lens-features">
-            <li>Türkiye pazarına özel optimizasyon</li>
-            <li>İşletme odaklı ürün tanıma</li>
-            <li>Hızlı ve güvenilir sonuçlar</li>
-            <li>Yerel veritabanı entegrasyonu</li>
-            <li>Gizlilik odaklı işleme</li>
-          </ul>
-        </div>
-
         <div class="lens-card gemini-lens" data-lens="gemini" id="geminiLens">
           <div class="status-badge unavailable" id="geminiStatusBadge">
             Kontrol ediliyor...
           </div>
           <div class="selected-indicator">✓</div>
-          <div class="lens-icon">✨</div>
-          <h3 class="lens-title">Gemini</h3>
+          <div class="lens-icon">🔍</div>
+          <h3 class="lens-title">Özel Lens Sistemi</h3>
           <p class="lens-description">
-            Google'ın çok modlu yapay zekâsı. Ücretsiz kotası olduğu için
-            OpenAI kredisi gerektirmeden çalışır.
+            Bizim yapılandırdığımız görsel analiz sistemi. Ürünün üzerindeki
+            marka/model yazısını da okuyup katalogda eşleştirir.
           </p>
           <ul class="lens-features" id="geminiFeatures">
-            <li class="disabled">Ücretsiz kota</li>
-            <li class="disabled">Güçlü görsel anlama</li>
-            <li class="disabled">Bağlama duyarlı ürün adı</li>
-            <li class="disabled">Türkçe desteği</li>
-            <li class="disabled">Düşük gecikme</li>
+            <li class="disabled">Marka ve model yazısını okur</li>
+            <li class="disabled">Türkçe ürün adlandırma</li>
+            <li class="disabled">Eş anlamlı terimlerle arar</li>
+            <li class="disabled">Katalog odaklı eşleştirme</li>
+            <li class="disabled">Hızlı sonuç</li>
           </ul>
         </div>
 
@@ -499,20 +477,17 @@
 
     <script>
       // Her lens icin: kart id'si, rozet, ozellik listesi ve durum alani.
+      // Icerideki anahtarlar degismedi (gemini/google/custom); yalnizca
+      // gorunen adlar. "custom" (OpenAI) artik karta sahip degil: hesabin
+      // kredisi bitti ve calismıyordu. Backend zincirinde yedek olarak
+      // duruyor, anahtar tekrar gecerli olursa kendiliginden devreye girer.
       const LENSES = {
-        custom: {
-          card: "customLens",
-          badge: null,
-          features: null,
-          statusKey: "openai_available",
-          label: "Özel Lens Sistemi",
-        },
         gemini: {
           card: "geminiLens",
           badge: "geminiStatusBadge",
           features: "geminiFeatures",
           statusKey: "gemini_available",
-          label: "Gemini",
+          label: "Özel Lens Sistemi",
         },
         google: {
           card: "googleLens",
@@ -523,7 +498,12 @@
         },
       };
 
-      let selectedLens = localStorage.getItem("selectedLens") || "custom";
+      // Eskiden "custom" secili olabilir; o kartin karsiligi kalmadigi icin
+      // gemini'ye tasiniyor, yoksa hicbir kart secili gorunmezdi.
+      let selectedLens = localStorage.getItem("selectedLens") || "gemini";
+      if (!["gemini", "google"].includes(selectedLens)) {
+        selectedLens = "gemini";
+      }
       let lensStatus = {
         openai_available: false,
         google_vision_available: false,
@@ -649,16 +629,15 @@
         if (e.key === "Enter") {
           continueLensSelection();
         }
-        if (e.key === "1") {
-          const customLens = document.querySelector(".lens-card.custom-lens");
-          if (!customLens.classList.contains("disabled")) {
-            customLens.click();
-          }
-        }
-        if (e.key === "2") {
-          const googleLens = document.querySelector(".lens-card.google-lens");
-          if (!googleLens.classList.contains("disabled")) {
-            googleLens.click();
+        // Kisayollar LENSES tablosundan uretiliyor: kart eklenip
+        // cikarildiginda burayi ayrica guncellemek gerekmesin (OpenAI karti
+        // kaldirilinca eski kod var olmayan elemana bakip hata veriyordu).
+        const sira = Object.keys(LENSES);
+        const idx = parseInt(e.key, 10) - 1;
+        if (Number.isInteger(idx) && idx >= 0 && idx < sira.length) {
+          const kart = document.getElementById(LENSES[sira[idx]].card);
+          if (kart && !kart.classList.contains("disabled")) {
+            kart.click();
           }
         }
       });
