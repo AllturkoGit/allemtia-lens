@@ -70,6 +70,20 @@ _origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.str
 if _origins:
     CORS(app, resources={r"/api/*": {"origins": _origins}})
 
+# ---------- Nabiz Hub izleme -----------------------------------------------
+# Sunucu hatalari, 5xx ve yavas istekler nabiz hub'a raporlanir. NABIZ_* ortam
+# degiskenleri tanimli degilse paket hicbir sey gondermez; kurulu degilse de
+# uygulama etkilenmez.
+try:
+    from nabiz.flask import NabizFlask
+
+    NabizFlask(app)
+except ImportError:
+    # Izleme paketi kurulu degil. Uygulamanin calismasini engellemez ama
+    # sessiz kalmaz: sessizce izlenmeyen bir kurulum bu ailenin en pahali
+    # ariza bicimi.
+    print("UYARI: allturko-nabiz kurulu degil, hata izleme kapali.")
+
 active_scans: dict[str, dict] = {}  # bellekte iş takibi
 _scans_lock = threading.Lock()
 

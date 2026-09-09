@@ -139,6 +139,35 @@ CMD ["gunicorn", "-w", "1", "--threads", "8", "-b", "0.0.0.0:5008", "wsgi:app"]
 - `GET /api/scan_status/<job_id>` - Arama durumu / sonuçlar
 - `POST /api/stop_scan/<job_id>` - Aramayı durdurma
 
+## İzleme (Nabız Hub)
+
+Sunucu hataları, 5xx yanıtlar ve yavaş istekler
+[nabiz-python](../../proje-izleme-sistemi/nabiz-python) paketiyle nabız hub'a raporlanır.
+Kurulum `app.py` içinde tek satır (`NabizFlask(app)`); paket kurulu değilse ya da
+`NABIZ_*` değişkenleri tanımlı değilse uygulama etkilenmez, hiçbir veri gönderilmez.
+
+Etkinleştirmek için:
+
+1. Nabız panelinde `allemtia-lens` projesini açın; anahtar ve secret oradan gelir.
+2. Paketi kurun: `pip install -r requirements.txt` (paket `requirements.txt` içinde
+   git URL'i ile tanımlı).
+3. `.env` dosyasına ekleyin:
+
+```env
+NABIZ_ENABLED=true
+NABIZ_URL=https://<hub-adresi>
+NABIZ_KEY=allemtia-lens
+NABIZ_SECRET=<panelden alinan 64 karakterlik secret>
+NABIZ_ENV=production
+```
+
+4. Doğrulayın: `nabiz-durum --test` — ardından panelde proje satırının `Bağlı`
+   göründüğünü kontrol edin. Hub geçersiz imzaya da `204` döndüğü için komut tek
+   başına yeterli değildir.
+
+Toplanmayanlar: IP, User-Agent, istek gövdesi, query string değerleri, oturum verisi.
+Hata mesajlarındaki e-posta/telefon/TCKN/IBAN gönderilmeden önce maskelenir.
+
 ## Güvenlik Notları
 
 - API anahtarlarınızı asla commit etmeyin
