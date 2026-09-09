@@ -1,14 +1,31 @@
-# Business Scanner
+# Lens - Görsel ile Ürün Arama
 
-Flask tabanlı kurumsal şirket arama uygulaması. Resim veya anahtar kelime ile Europages üzerinden şirket araması yapabilirsiniz.
+Flask tabanlı görsel arama uygulaması. Kullanıcı ürünün fotoğrafını yükler,
+yapay zekâ ürün adını çıkarır ve **allemtia kataloğunda** o ürün aranır.
 
 ## Özellikler
 
-- 🖼️ Resim ile ürün analizi (OpenAI GPT-4 Vision)
+- 🖼️ Resim ile ürün analizi (Gemini / OpenAI / Google Vision)
 - 🔤 Anahtar kelime ile arama
-- 🌍 Çoklu ülke desteği (Türkiye, Almanya, Hollanda, Fransa)
+- 🛒 allemtia kataloğunda ürün arama (ad + fiyat + görsel + ürün linki)
 - 📊 Gerçek zamanlı sonuç gösterimi
-- 📧 Şirket iletişim bilgileri (telefon, email)
+
+## Veri kaynağı
+
+Sonuçlar `ALLEMTIA_API_URL` üzerinden `GET /home/products?search=...`
+ile alınır. Bu uç **backend'de arama desteği gerektirir**; desteklemeyen bir
+sürüm bilinmeyen parametreyi yok sayıp tüm katalogu döndüreceği için uygulama
+yanıttaki `search` alanını doğrular ve eşleşmezse alakasız sonuç göstermek
+yerine hata verir.
+
+Görsel analizinden gelen ad katalog adlandırmasıyla birebir tutmayabilir
+(model "metal boru" der, katalogda "Alüminyum Boru 40mm" vardır). Tam terim
+sonuç vermezse son kelimeyle ("boru") tekrar aranır ve arayüz bunu bildirir.
+
+> Not: Önceki sürüm Europages'i kazıyıp firma iletişim bilgisi topluyordu.
+> Europages aramayı Nuxt SPA'ya taşıdığı (ve AWS WAF captcha eklediği) için o
+> kod her ortamda 0 sonuç veriyordu; ayrıca asıl ihtiyaç kendi kataloğumuzda
+> arama olduğu için tamamen kaldırıldı.
 
 ## Kurulum
 
@@ -46,6 +63,9 @@ GOOGLE_APPLICATION_CREDENTIALS=google-vision-credentials.json
 # Opsiyonel
 GEMINI_MODEL=gemini-3.6-flash      # varsayilan; hesabinizda yoksa degistirin
 OPENAI_MODEL=gpt-4o
+ALLEMTIA_API_URL=https://sadmin.allemtia.com.tr/api   # katalog API tabani
+ALLEMTIA_SITE_URL=https://allemtia.com.tr             # urun linklerinin tabani
+ALLEMTIA_TENANT_ID=                                   # bos = tum tenantlar
 CORS_ORIGINS=                      # bos = kapali (arayuz ayni origin'den servis ediliyor)
 FLASK_ENV=production               # SECRET_KEY yoksa acilista hata verir
 ```
@@ -115,9 +135,9 @@ CMD ["gunicorn", "-w", "1", "--threads", "8", "-b", "0.0.0.0:5008", "wsgi:app"]
 
 - `GET /` - Ana sayfa
 - `POST /api/analyze_image` - Resim analizi
-- `POST /api/start_scan` - Tarama başlatma
-- `GET /api/scan_status/<job_id>` - Tarama durumu kontrolü
-- `POST /api/stop_scan/<job_id>` - Taramayı durdurma
+- `POST /api/start_scan` - Katalog araması başlatma
+- `GET /api/scan_status/<job_id>` - Arama durumu / sonuçlar
+- `POST /api/stop_scan/<job_id>` - Aramayı durdurma
 
 ## Güvenlik Notları
 

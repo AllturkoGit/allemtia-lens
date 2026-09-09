@@ -583,7 +583,7 @@
     <div class="container">
       <h1>Business Scanner</h1>
       <p class="subtitle">
-        Ürün fotoğrafı veya anahtar kelime ile ilgili şirketleri bulun
+        Ürün fotoğrafı veya anahtar kelime ile katalogdaki ürünleri bulun
       </p>
 
       <!-- Arama türü seçimi -->
@@ -679,21 +679,11 @@
           />
         </div>
 
-        <div class="form-group">
-          <label for="country">Ülke</label>
-          <select id="country">
-            <option value="TR">🇹🇷 Türkiye</option>
-            <option value="DE">🇩🇪 Almanya</option>
-            <option value="NL">🇳🇱 Hollanda</option>
-            <option value="FR">🇫🇷 Fransa</option>
-          </select>
-        </div>
-
         <button id="searchBtn" onclick="startSearch()">
           <span>Aramayı Başlat</span>
         </button>
         <button id="stopBtn" onclick="stopSearch()" style="display: none">
-          <span>Taramayı Durdur</span>
+          <span>Aramayı Durdur</span>
         </button>
       </div>
 
@@ -702,7 +692,7 @@
       <div id="resultsSection" class="results-section">
         <div class="results-header">
           <div class="results-count">
-            Bulunan: <span id="resultCount">0</span> şirket
+            Bulunan: <span id="resultCount">0</span> ürün
             <span
               id="productTag"
               class="product-tag"
@@ -716,8 +706,9 @@
             <table>
               <thead>
                 <tr>
-                  <th>Şirket Adı</th>
-                  <th>Website</th>
+                  <th style="width: 84px">Görsel</th>
+                  <th>Ürün</th>
+                  <th style="width: 140px">Fiyat</th>
                 </tr>
               </thead>
               <tbody id="resultsBody"></tbody>
@@ -911,6 +902,45 @@
         reader.readAsDataURL(file);
       }
 
+      // Katalog urununu tablo satirina cevirir.
+      function renderRow(p, index) {
+        const tr = document.createElement("tr");
+        tr.style.animationDelay = `${Math.min(index, 20) * 0.05}s`;
+        const price =
+          p.fiyat != null && p.fiyat !== ""
+            ? Number(p.fiyat).toLocaleString("tr-TR", {
+                minimumFractionDigits: 2,
+              }) + " ₺"
+            : "-";
+        const img = p.gorsel
+          ? `<img src="${escapeHtml(p.gorsel)}" alt="" loading="lazy"
+                 style="width:64px;height:64px;object-fit:cover;border-radius:8px">`
+          : "";
+        const name = escapeHtml(p.ad || "");
+        const title = p.url
+          ? `<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener"
+               class="website-link">${name}</a>`
+          : name;
+        tr.innerHTML = `
+          <td>${img}</td>
+          <td>
+            <div style="font-weight:600">${title}</div>
+            <div style="color:#6b7280;font-size:13px;margin-top:2px">
+              ${escapeHtml(p.aciklama || "")}
+            </div>
+          </td>
+          <td style="white-space:nowrap;font-weight:600">${price}</td>`;
+        return tr;
+      }
+
+      // Urun adi/aciklamasi katalogdan geliyor; HTML olarak yorumlanmamali.
+      function escapeHtml(str) {
+        return String(str).replace(/[&<>"']/g, (c) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;",
+          '"': "&quot;", "'": "&#39;",
+        })[c]);
+      }
+
       function showStatus(message, type = "loading") {
         const statusBar = document.getElementById("statusBar");
         statusBar.className = `status-bar active ${type}`;
@@ -953,7 +983,6 @@
       }
 
       async function startSearch() {
-        const country = document.getElementById("country").value;
         const searchType = document.querySelector(
           'input[name="searchType"]:checked'
         ).value;
@@ -1045,7 +1074,6 @@
             },
             body: JSON.stringify({
               keyword: document.getElementById("sector").value,
-              country: country,
             }),
           });
 
@@ -1088,19 +1116,9 @@
             const tbody = document.getElementById("resultsBody");
             document.getElementById("emptyState").style.display = "none";
 
-            data.new_rows.forEach((row, index) => {
-              const tr = document.createElement("tr");
-              tr.style.animationDelay = `${index * 0.05}s`;
-              tr.innerHTML = `
-                            <td>${row[0] || ""}</td>
-                            <td>${
-                              row[1]
-                                ? `<a href="${row[1]}" target="_blank" class="website-link">${row[1]}</a>`
-                                : ""
-                            }</td>
-                        `;
-              tbody.appendChild(tr);
-              allResults.push(row);
+            data.new_rows.forEach((p, i) => {
+              tbody.appendChild(renderRow(p, i));
+              allResults.push(p);
             });
 
             document.getElementById("resultCount").textContent =
@@ -1110,7 +1128,7 @@
           // Update status
           if (data.status === "running") {
             showStatus(
-              `Tarama devam ediyor... ${data.rows_found} şirket bulundu`,
+              `Aranıyor... ${data.rows_found} ürün bulundu`,
               "loading"
             );
           } else if (data.status === "stopping") {
@@ -1118,14 +1136,22 @@
           } else if (data.status === "stopped") {
             clearInterval(statusCheckInterval);
             showStatus(
-              `Tarama durduruldu. ${data.rows_found} şirket bulundu`,
+              `Arama durduruldu. ${data.rows_found} ürün bulundu`,
               "success"
             );
             setScanning(false);
           } else if (data.status === "completed") {
             clearInterval(statusCheckInterval);
+            // Tam terimle sonuc cikmayip terim genisletildiyse bunu soyle;
+            // sessizce baska bir aramanin sonucunu gostermek yaniltici olur.
+            const asked = document.getElementById("sector").value.trim();
+            const used = data.used_keyword;
+            const note =
+              used && used !== asked
+                ? ` ("${asked}" için sonuç yok, "${used}" ile arandı)`
+                : "";
             showStatus(
-              `Tarama tamamlandı! ${data.rows_found} şirket bulundu`,
+              `Arama tamamlandı! ${data.rows_found} ürün bulundu${note}`,
               "success"
             );
             setScanning(false);
@@ -1136,21 +1162,7 @@
               const tbody = document.getElementById("resultsBody");
               tbody.innerHTML = "";
               document.getElementById("emptyState").style.display = "none";
-
-              data.rows.forEach((row, index) => {
-                const tr = document.createElement("tr");
-                tr.style.animationDelay = `${index * 0.05}s`;
-                tr.innerHTML = `
-                                <td>${row[0] || ""}</td>
-                                <td>${
-                                  row[1]
-                                    ? `<a href="${row[1]}" target="_blank" class="website-link">${row[1]}</a>`
-                                    : ""
-                                }</td>
-                            `;
-                tbody.appendChild(tr);
-              });
-
+              allResults.forEach((p, i) => tbody.appendChild(renderRow(p, i)));
               document.getElementById("resultCount").textContent =
                 allResults.length;
             }

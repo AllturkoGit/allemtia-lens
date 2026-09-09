@@ -1,21 +1,14 @@
 # ---------------------------------------------------------------------------
-#  app.py   –   Flask Business Scanner Application with Google Vision API
+#  app.py   –   Gorsel ile allemtia katalog aramasi (Flask)
 # ---------------------------------------------------------------------------
-import os, re, time, uuid, random, threading, traceback
-import unicodedata, concurrent.futures, requests, base64
+import os, time, uuid, threading, traceback
+import requests, base64
 import tempfile
 from datetime import datetime
-from urllib.parse import urlparse, urljoin, unquote, urlencode
 from dotenv import load_dotenv
 
-import pandas as pd
-from bs4 import BeautifulSoup
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from deep_translator import GoogleTranslator
-import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Google Vision API imports
 try:
@@ -104,16 +97,18 @@ def purge_old_scans():
 
 # ---------- Ortak urun tanima istemi -----------------------------------------
 
+# Katalog Turkce oldugu icin urun adi da Turkce isteniyor. Ingilizce donseydi
+# ("glass cup") Turkce katalogda ("Cam Bardak") hicbir sey eslesmezdi.
 PRODUCT_PROMPT = (
-    "Only write the product name using minimal words. When the product is a "
-    "glass cup, explicitly output 'glass cup' (not just 'glass') to avoid "
-    "confusion with the raw material. Preferably one word; if it's two words, "
-    "that's acceptable. If a synonym is available, choose the more specific "
-    "version. If there is no product in image, only write 'There is no product "
-    "in image.'"
+    "Görseldeki ürünün adını TÜRKÇE olarak, en az kelimeyle yaz. "
+    "Ticari/sanayi ürünlerinde malzemeyi de belirt (ornek: 'cam bardak', "
+    "'aluminyum boru', 'demir profil') - sadece malzeme adi ('cam', 'aluminyum') "
+    "yazma. Tercihen bir, en fazla iki kelime. Aciklama, noktalama veya ek "
+    "cumle yazma. Görselde bir ürün yoksa sadece sunu yaz: "
+    "Görselde ürün yok"
 )
 
-NO_PRODUCT = "There is no product in image"
+NO_PRODUCT = "Görselde ürün yok"
 
 _MIME_BY_EXT = {
     ".jpg": "image/jpeg",
@@ -406,425 +401,118 @@ def analyze_image_hybrid(image_path, lens_type="custom"):
 
 
 # ---------------------------------------------------------------------------
-#  EUROPAGES SCRAPER (önceki kodun aynısı)
+#  ALLEMTIA KATALOG ARAMASI
 # ---------------------------------------------------------------------------
+#
+# Onceden burada Europages scraper'i vardi: arama sonuc sayfalarini kazir,
+# her firmanin sitesine girip telefon/e-posta toplardi. Iki sebeple kaldirildi:
+#   1) Europages aramayi Nuxt SPA'ya tasidi, sunucudan gelen HTML'de artik
+#      firma bilgisi yok (uzerine AWS WAF captcha eklendi) - kod her ortamda
+#      0 sonuc donuyordu.
+#   2) Asil ihtiyac zaten kendi katalogumuzda arama: kullanici urunun
+#      fotografini cekip allemtia'da satan magazalari gormeli.
 
-CONTACT_KEYWORDS = [
-    "contact",
-    "contacts",
-    "contact-us",
-    "contactus",
-    "contact_us",
-    "iletisim",
-    "iletişim",
-    "bize-ulasin",
-    "bize_ulasin",
-    "bizeulasin",
-    "kontakt",
-    "contacto",
-    "contatto",
-    "contato",
-    "contacte",
-    "kontakty",
-    "контакты",
-    "контакт",
-    "контакти",
-    "聯絡我們",
-    "联系我们",
-    "お問い合わせ",
-    "연락처",
-    "اتصل-بنا",
-    "ارتباط",
-    "संपर्क",
-    "ติดต่อเรา",
-    "liên-hệ",
-]
+ALLEMTIA_API = os.getenv(
+    "ALLEMTIA_API_URL", "https://sadmin.allemtia.com.tr/api"
+).rstrip("/")
+ALLEMTIA_TENANT_ID = os.getenv("ALLEMTIA_TENANT_ID", "")
+ALLEMTIA_SITE = os.getenv("ALLEMTIA_SITE_URL", "https://allemtia.com.tr").rstrip("/")
+SEARCH_PAGE_SIZE = 24  # API varsayilaniyla ayni; buyuk sayfalar yaniti yavaslatiyor
 
 
-def normalize_text(text):
-    text = unicodedata.normalize("NFC", str(text))
-    tr_map = {
-        "ş": "s",
-        "Ş": "S",
-        "ö": "o",
-        "Ö": "O",
-        "ü": "u",
-        "Ü": "U",
-        "ğ": "g",
-        "Ğ": "G",
-        "ı": "i",
-        "I": "I",
-        "ç": "c",
-        "Ç": "C",
-        "İ": "I",
-    }
-    for o, n in tr_map.items():
-        text = text.replace(o, n)
-    return text.lower().strip()
+def product_url(product):
+    slug = product.get("slug")
+    return f"{ALLEMTIA_SITE}/urun/{slug}" if slug else ALLEMTIA_SITE
 
 
-def clean_email(email):
-    if not email:
-        return email
-    email = unquote(email)
-    email = re.sub(r"u00[0-9a-fA-F]{2}", "", email)
-    email = re.sub(r"u0[0-9a-fA-F]{3}", "", email)
-    email = email.strip()
-    if len(email) > 35:
-        return None
-    if email.lower().endswith((".gif", ".png", ".jpg", ".jpeg", ".bmp")):
-        return None
-    return email
+def search_catalog(keyword, limit=SEARCH_PAGE_SIZE, on_page=None):
+    """allemtia katalogunda arar; sonuc yoksa terimi genisletir.
+
+    Gorsel analizinden gelen ad katalog adlandirmasiyla birebir tutmuyor:
+    model "metal boru" der, katalogda "Aluminyum Boru 40mm" vardir. Backend
+    tum kelimelerin eslesmesini aradigi icin bu 0 sonuc verir. Turkcede
+    tamlamanin ana adi sonda oldugundan ("metal BORU"), tam terim bos donerse
+    son kelimeyle tekrar deneniyor.
+
+    (urunler, kullanilan_terim) doner; arayuz daraltilmis terimi gosterebilsin.
+    """
+    terms = [t for t in keyword.split() if t]
+    adaylar = [keyword]
+    if len(terms) > 1:
+        adaylar.append(terms[-1])
+
+    for aday in adaylar:
+        sonuc = _search_once(aday, limit, on_page if aday == adaylar[0] else None)
+        if sonuc:
+            if aday != keyword and on_page:
+                on_page(sonuc)
+            return sonuc, aday
+    return [], keyword
 
 
-def clean_phone(phone):
-    if not phone:
-        return phone
-    phone = unquote(phone)
-    out = []
-    for part in re.split(r"[^\d\s]+|[a-zA-Z]+", phone):
-        d = re.sub(r"\D", "", part.strip())
-        if 7 <= len(d) <= 15:
-            out.append(d)
-    return out
+def _search_once(keyword, limit=SEARCH_PAGE_SIZE, on_page=None):
+    headers = {"Accept": "application/json"}
+    found = []
+    page = 1
 
-
-def is_contact_url(t):
-    return any(k in normalize_text(t) for k in CONTACT_KEYWORDS)
-
-
-def extract_contact_info(soup):
-    tel, mail = set(), set()
-
-    def links():
-        for a in soup.find_all("a", href=lambda x: x and "mailto:" in x):
-            m = clean_email(a["href"].replace("mailto:", "").strip())
-            if m and "@" in m:
-                mail.add(m)
-        for a in soup.find_all("a", href=lambda x: x and "tel:" in x):
-            for t in clean_phone(a["href"].replace("tel:", "")):
-                tel.add(t)
-
-    def regex():
-        for m in re.findall(
-            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", str(soup)
-        ):
-            m = clean_email(m)
-            if m and "@" in m:
-                mail.add(m)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        ex.submit(links)
-        ex.submit(regex)
-        ex.shutdown(wait=True)
-    return list(tel), list(mail)
-
-
-def find_contact_links(soup, base_url):
-    out = []
-    for a in soup.find_all("a", href=True):
-        h = a["href"]
-        if h and is_contact_url(h):
-            out.append(
-                h if h.startswith(("http://", "https://")) else urljoin(base_url, h)
-            )
-    return out
-
-
-# -------------------- KURUMSAL WORKER (önceki kodun aynısı) ---------------
-def kurumsal_arama_worker(
-    kurumsal_sektor,
-    kurumsal_dosya,
-    kurumsal_lokasyon,
-    selected_types=None,
-    callback=None,
-    should_stop=None,
-):
-    # should_stop: True donerse tarama ilk uygun noktada birakilir.
-    # Eskiden /api/stop_scan sadece status'u "stopping" yapiyordu, worker bunu
-    # hic okumadigi icin tarama durmuyordu.
-    stop = should_stop or (lambda: False)
-    # deep_translator duz string dondurur; eski googletrans'taki .text ve dest=
-    # kullanimi her cagrida AttributeError/TypeError atiyordu, yani ceviri hic
-    # calismiyordu ve Turkce anahtar kelime cevrilmeden Europages'e gidiyordu.
-    try:
-        translator = GoogleTranslator(source="auto", target="en")
-        kurumsal_sektor_en = translator.translate(kurumsal_sektor)
-        if not kurumsal_sektor_en:
-            kurumsal_sektor_en = kurumsal_sektor
-    except Exception as e:
-        print(f"Ceviri basarisiz, orijinal kelime kullanilacak: {e}")
-        kurumsal_sektor_en = kurumsal_sektor
-
-    # Satirlar 10 thread'ten geliyor; kilitli listeye toplanip en sonda tek
-    # seferde DataFrame'e cevriliyor. Eskiden her satirda pd.concat yapiliyordu:
-    # hem yarisa acikti (kayit kaybi) hem de O(n^2) idi.
-    collected_rows: list[dict] = []
-    df_lock = threading.Lock()
-    all_urls = []
-
-    # Ülke konfigürasyonları (önceki kodun aynısı)
-    country_configs = {
-        "TR": {
-            "locationCountryCode": "TR",
-            "locationLatitude": "38.9637",
-            "locationLongitude": "35.2433",
-            "locationName": "Turkey",
-        },
-        "DE": {
-            "locationCountryCode": "DE",
-            "locationLatitude": "51.1657",
-            "locationLongitude": "10.4515",
-            "locationName": "Germany",
-        },
-        "GB": {
-            "locationCountryCode": "GB",
-            "locationLatitude": "55.3781",
-            "locationLongitude": "-3.4360",
-            "locationName": "United Kingdom",
-        },
-        "NL": {
-            "locationCountryCode": "NL",
-            "locationLatitude": "52.1326",
-            "locationLongitude": "5.2913",
-            "locationName": "Netherlands",
-        },
-        "FR": {
-            "locationCountryCode": "FR",
-            "locationLatitude": "46.2276",
-            "locationLongitude": "2.2137",
-            "locationName": "France",
-        },
-        "ES": {
-            "locationCountryCode": "ES",
-            "locationLatitude": "40.4637",
-            "locationLongitude": "-3.7492",
-            "locationName": "Spain",
-        },
-        "IT": {
-            "locationCountryCode": "IT",
-            "locationLatitude": "41.8719",
-            "locationLongitude": "12.5674",
-            "locationName": "Italy",
-        },
-    }
-
-    country_code = "TR"
-    if kurumsal_lokasyon in country_configs:
-        country_code = kurumsal_lokasyon
-    elif kurumsal_lokasyon == "Turkey":
-        country_code = "TR"
-
-    country_config = country_configs.get(country_code, country_configs["TR"])
-
-    base_url = "https://www.europages.co.uk/en/search"
-    params = {
-        "isPserpFirst": "1",
-        "locationCountryCode": country_config["locationCountryCode"],
-        "locationKind": "country",
-        "locationLatitude": country_config["locationLatitude"],
-        "locationLongitude": country_config["locationLongitude"],
-        "locationName": country_config["locationName"],
-        "locationRadius": "50km",
-        "q": kurumsal_sektor_en,
-    }
-
-    search_url = base_url + "?" + urlencode(params)
-
-    # Scraping kodunun geri kalanı (önceki kodun aynısı)
-    try:
-        hdr = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "tr,en-US;q=0.7,en;q=0.3",
-            "Connection": "keep-alive",
+    while len(found) < limit:
+        params = {
+            "search": keyword,
+            "per_page": min(SEARCH_PAGE_SIZE, limit - len(found)),
+            "page": page,
         }
+        if ALLEMTIA_TENANT_ID:
+            params["tenant_id"] = ALLEMTIA_TENANT_ID
 
-        r = requests.get(search_url, headers=hdr, verify=False, timeout=15)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.content, "html.parser")
-
-        pagination_numbers = soup.select('[data-test="pagination-number"]')
-        if pagination_numbers:
-            digits = []
-            for num_elem in pagination_numbers:
-                text = num_elem.get_text(strip=True)
-                if re.fullmatch(r"\d+", text):
-                    digits.append(int(text))
-            last_page = max(digits) if digits else 1
-        else:
-            last_page = 1
-
-        all_urls.append(search_url)
-        if last_page > 1:
-            for page_num in range(2, last_page + 1):
-                page_url = f"{base_url}/page/{page_num}?" + urlencode(params)
-                all_urls.append(page_url)
-
-        if callback:
-            callback(f"Toplam {len(all_urls)} sayfa bulundu", "", "", "")
-
-    except Exception as e:
-        traceback.print_exc()
-        all_urls = [search_url]
-
-    def sayfa_isle(url, session, hdr):
-        l = []
-        if stop():
-            return l
-        try:
-            r = session.get(url, headers=hdr, verify=False, timeout=10)
-            r.raise_for_status()
-            s = BeautifulSoup(r.content, "html.parser")
-            for link in s.select('a[data-test="company-name"]'):
-                h = link.get("href")
-                if h:
-                    l.append(h)
-            time.sleep(random.uniform(0.3, 0.7))
-        except:
-            pass
-        return l
-
-    def sirket_linklerini_topla(liste):
-        hdr = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "tr,en-US;q=0.7,en;q=0.3",
-            "Connection": "keep-alive",
-        }
-        tum = []
-        with requests.Session() as sess:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-                fut = {ex.submit(sayfa_isle, u, sess, hdr): u for u in liste}
-                for f in concurrent.futures.as_completed(fut):
-                    tum.extend(f.result())
-        if callback:
-            callback(f"Toplam {len(tum)} şirket linki bulundu", "", "", "")
-        return tum
-
-    def process_contact_page(link, hdr):
-        try:
-            r = requests.get(link, headers=hdr, verify=False, timeout=10)
-            return extract_contact_info(BeautifulSoup(r.text, "html.parser"))
-        except:
-            return [], []
-
-    def istek_gonder(url):
-        if stop():
-            return
-        try:
-            ep_url = f"https://www.europages.co.uk{url}"
-            hdr = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "tr,en-US;q=0.7,en;q=0.3",
-                "Connection": "keep-alive",
-            }
-            r = requests.get(ep_url, headers=hdr, verify=False, timeout=15)
-            r.raise_for_status()
-            soup = BeautifulSoup(r.content, "html.parser")
-            sirket_adi = ""
-            span = soup.select_one(
-                "span.font-display-400.overflow-hidden.text-ellipsis[title]"
-            )
-            if span:
-                sirket_adi = span.get("title", "").strip()
-            web_btn = soup.select_one("a.btn.btn--subtle.btn--md.website-button")
-            if not web_btn:
-                return
-            web_link = web_btn.get("href")
-            if not web_link:
-                return
-            add_phones = []
-            for ph in re.findall(r"\+\d{9,}", str(r.content)):
-                d = re.sub(r"\D", "", ph)
-                if 7 <= len(d) <= 15:
-                    add_phones.append(d)
-            try:
-                wr = requests.get(web_link, headers=hdr, verify=False, timeout=10)
-                wsoup = BeautifulSoup(wr.text, "html.parser")
-                phones, mails = extract_contact_info(wsoup)
-                phones.extend([p for p in add_phones if p not in phones])
-                base = f"{urlparse(web_link).scheme}://{urlparse(web_link).netloc}"
-                contact_links = find_contact_links(wsoup, base)[:3]
-                if contact_links:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-                        fut = {
-                            ex.submit(process_contact_page, l, hdr): l
-                            for l in contact_links
-                        }
-                        for futr in concurrent.futures.as_completed(fut):
-                            cp, cm = futr.result()
-                            phones.extend([t for t in cp if t not in phones])
-                            mails.extend([m for m in cm if m not in mails])
-                e_list = [
-                    m
-                    for m in mails
-                    if m
-                    and "@" in m
-                    and len(m) <= 35
-                    and not m.lower().endswith(
-                        (".gif", ".png", ".jpg", ".jpeg", ".bmp")
-                    )
-                ]
-                p_list = phones
-                if e_list or p_list:
-                    rows = [
-                        {
-                            "Adı": sirket_adi,
-                            "Website": web_link,
-                            "Email": e_list[i] if i < len(e_list) else "",
-                            "Telefon": p_list[i] if i < len(p_list) else "",
-                        }
-                        for i in range(max(len(e_list), len(p_list)))
-                    ]
-                    with df_lock:
-                        collected_rows.extend(rows)
-                if callback:
-                    callback(sirket_adi, web_link, ", ".join(e_list), ", ".join(p_list))
-            except Exception:
-                if add_phones:
-                    with df_lock:
-                        collected_rows.extend(
-                            {
-                                "Adı": sirket_adi,
-                                "Website": web_link,
-                                "Email": "",
-                                "Telefon": ph,
-                            }
-                            for ph in add_phones
-                        )
-                if callback:
-                    callback(sirket_adi, web_link, "", ", ".join(add_phones))
-            time.sleep(random.uniform(0.3, 0.7))
-        except:
-            pass
-
-    sirket_linkleri = sirket_linklerini_topla(all_urls)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
-        ex.map(istek_gonder, sirket_linkleri)
-
-    def clean_name(ad):
-        return re.sub(r"-\d+$", " ", ad).replace("-", " ").title()
-
-    df = pd.DataFrame(collected_rows, columns=["Adı", "Website", "Email", "Telefon"])
-    if not df.empty:
-        df["Adı"] = df["Adı"].apply(clean_name)
-
-    data_list = [
-        {
-            "ad": r["Adı"],
-            "website": r["Website"],
-            "email": r["Email"],
-            "phone": r["Telefon"],
-        }
-        for _, r in df.iterrows()
-    ]
-    if callback:
-        callback(
-            "İşlem durduruldu" if stop() else "İşlem tamamlandı", "", "", ""
+        r = requests.get(
+            f"{ALLEMTIA_API}/home/products",
+            params=params,
+            headers=headers,
+            timeout=45,
         )
-    return None, data_list
+        if not r.ok:
+            raise RuntimeError(
+                f"Katalog API ({r.status_code}) {api_error_detail(r)}"
+            )
+
+        payload = r.json()
+
+        # Backend aramayi gercekten uyguladi mi? Eski surum bilinmeyen
+        # parametreyi sessizce yok sayip TUM katalogu donduruyor; bu durumda
+        # kullaniciya alakasiz urunleri "sonuc" diye gostermektense hata
+        # vermek dogru.
+        if page == 1 and payload.get("search") != keyword:
+            raise RuntimeError(
+                "Katalog API'si arama parametresini desteklemiyor "
+                "(backend guncellenmeli). Alakasiz sonuc donmemesi icin "
+                "arama durduruldu."
+            )
+
+        items = payload.get("data") or []
+        if not items:
+            break
+
+        batch = [
+            {
+                "id": it.get("id"),
+                "ad": it.get("name") or "",
+                "fiyat": it.get("price"),
+                "gorsel": it.get("productImg") or "",
+                "url": product_url(it),
+                "aciklama": (it.get("description") or "")[:160],
+            }
+            for it in items
+        ]
+        found.extend(batch)
+        if on_page:
+            on_page(batch)
+
+        meta = payload.get("meta") or {}
+        if page >= (meta.get("last_page") or page):
+            break
+        page += 1
+
+    return found[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -861,78 +549,55 @@ def start_scan():
     if not request.is_json:
         return jsonify({"success": False, "error": "JSON verisi gerekli"}), 400
     data = request.get_json()
-    if "keyword" not in data:
+    keyword = (data.get("keyword") or "").strip()
+    if not keyword:
         return jsonify({"success": False, "error": "keyword parametresi gerekli"}), 400
 
     purge_old_scans()
 
-    country = data.get("country", "TR")
     job_id = str(uuid.uuid4())
     active_scans[job_id] = {
         "status": "running",
         "start_time": datetime.now().isoformat(),
-        "keyword": data["keyword"],
-        "country": country,
+        "keyword": keyword,
         "rows": [],
         "rows_found": 0,
         "new_rows": [],
-        "file": None,
         "error": None,
-        "last_error": None,
         "finished_at": None,
     }
 
-    def scan_europages(sector: str, country: str = "TR", job_id: str | None = None):
-        if job_id:
-            active_scans[job_id]["status"] = "running"
-
-        def _cb(name, web, mail, phone):
-            if not job_id or name.startswith(("Toplam", "İşlem")):
-                return
-            row = [name, web, phone, mail]
-            d = active_scans[job_id]
-            d["rows"].append(row)
-            d["new_rows"].append(row)
-            d["rows_found"] += 1
-
+    def run_search(term: str, job_id: str):
         def _should_stop():
-            return bool(job_id) and active_scans.get(job_id, {}).get(
-                "status"
-            ) in ("stopping", "stopped")
+            return active_scans.get(job_id, {}).get("status") in (
+                "stopping",
+                "stopped",
+            )
+
+        def _on_page(batch):
+            d = active_scans.get(job_id)
+            if d is None:
+                return
+            d["rows"].extend(batch)
+            d["new_rows"].extend(batch)
+            d["rows_found"] = len(d["rows"])
 
         try:
-            _, data_rows = kurumsal_arama_worker(
-                kurumsal_sektor=sector,
-                kurumsal_dosya="",
-                kurumsal_lokasyon=country,
-                selected_types=None,
-                callback=_cb,
-                should_stop=_should_stop,
-            )
-            if job_id:
-                if data_rows and not active_scans[job_id]["rows"]:
-                    for r in data_rows:
-                        active_scans[job_id]["rows"].append(
-                            [r["ad"], r["website"], r["phone"], r["email"]]
-                        )
-                    active_scans[job_id]["rows_found"] = len(
-                        active_scans[job_id]["rows"]
-                    )
-
-                active_scans[job_id]["status"] = (
-                    "stopped" if _should_stop() else "completed"
-                )
-                active_scans[job_id]["finished_at"] = time.time()
+            _, used_term = search_catalog(term, on_page=_on_page)
+            d = active_scans.get(job_id)
+            if d is not None:
+                d["used_keyword"] = used_term
+                d["status"] = "stopped" if _should_stop() else "completed"
+                d["finished_at"] = time.time()
         except Exception as e:
             traceback.print_exc()
-            if job_id:
-                active_scans[job_id]["status"] = "error"
-                active_scans[job_id]["error"] = str(e)
-                active_scans[job_id]["finished_at"] = time.time()
+            d = active_scans.get(job_id)
+            if d is not None:
+                d["status"] = "error"
+                d["error"] = str(e)
+                d["finished_at"] = time.time()
 
-    t = threading.Thread(
-        target=scan_europages, args=(data["keyword"].strip(), country, job_id)
-    )
+    t = threading.Thread(target=run_search, args=(keyword, job_id))
     t.daemon = True
     t.start()
     return jsonify({"success": True, "job_id": job_id})
@@ -950,13 +615,14 @@ def scan_status(job_id):
     d["new_rows"] = []
     resp = {
         "status": d["status"],
+        "used_keyword": d.get("used_keyword"),
         "rows_found": d["rows_found"],
         "new_rows": new_rows,
         "rows": d["rows"],
     }
     if d["status"] in ("completed", "error", "stopped"):
         resp.update(
-            {"file": d["file"], "total_rows": len(d["rows"]), "error": d["error"]}
+            {"total_rows": len(d["rows"]), "error": d["error"]}
         )
     return jsonify(resp)
 
